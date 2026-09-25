@@ -1,5 +1,16 @@
-/* Studio CAI — Presenze studio v2.0.0
+/* Studio CAI — Presenze studio v2.1.0
    Postazione di timbratura con badge QR, allineata a Portieri 2.0.
+
+   NOVITÀ 2.1.0 — "In studio adesso" condiviso
+   Nella 2.0 il riquadro si basava solo sulle timbrature fatte dallo
+   stesso dispositivo: chi timbra dal proprio telefono non vedeva gli
+   altri. Ora l'app legge lo stato di oggi dal registro Google (tab 102,
+   103, 104) tramite un piccolo Apps Script pubblicato come app web
+   (status_url in config.json). Nessun credito Make: la lettura non passa
+   da Make. Si aggiorna all'apertura, al ritorno sulla pagina, ogni 3
+   minuti mentre l'app è in primo piano e subito dopo ogni timbratura.
+   Le timbrature ancora in coda su questo dispositivo si sommano a quelle
+   del registro, così il riquadro è corretto anche senza rete.
 
    COSA CAMBIA RISPETTO ALLA 1.1.0
    - Fotocamera sempre accesa: si avvicina il badge e basta.
@@ -21,10 +32,11 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.0.0";
-const LAST_UPDATE = "2026-09-23";
+const APP_VERSION = "2.1.0";
+const LAST_UPDATE = "2026-09-25";
 const CONFIG_DEFAULT = {
-  webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z"
+  webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
+  status_url: ""
 };
 const EMPLOYEES_DEFAULT = [
   { id: "STF001", nome: "Simone Pomponi" },
@@ -42,6 +54,9 @@ const SCAN_EVERY_MS = 160;          // cadenza di analisi dei fotogrammi
 const MAX_AUTO_ATTEMPTS = 3;
 const MANUAL_WINDOW_DAYS = 31;
 const POST_TIMEOUT_MS = 10000;
+const REMOTE_KEY = "cai_studio_stato_v1";
+const STATUS_EVERY_MS = 3 * 60 * 1000;  // aggiornamento mentre l'app è aperta
+const STATUS_AFTER_SEND_MS = 4000;      // rilettura dopo una timbratura
 
 const state = {
   config: { ...CONFIG_DEFAULT },
@@ -58,7 +73,9 @@ const state = {
   countLeft: COUNTDOWN_S,
   doneTimer: null,
   wakeLock: null,
-  flushing: false
+  flushing: false,
+  remote: null,            // { date: "YYYY-MM-DD", events: [{id,tipo,ora}], at: ms }
+  statusLoading: false
 };
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -136,12 +153,19 @@ function setEventStatus(requestId, status){
   const ev = day.events.find(e => e.request_id === requestId);
   if(ev){ ev.status = status; saveDay(day); }
 }
-/* Timbrature con data di oggi di un collega, in ordine di orario */
+/* Timbrature di oggi di un collega, in ordine di orario: quelle del
+   registro condiviso più quelle di questo dispositivo non ancora
+   presenti nel registro (in coda, o inviate da pochi istanti). */
 function todayEventsOf(empId){
   const today = todayISO();
-  return loadDay().events
+  const remote = (state.remote && state.remote.date === today)
+    ? state.remote.events.filter(e => e.id === empId).map(e => ({ tipo: e.tipo, ora: e.ora, created: 0 }))
+    : [];
+  const local = loadDay().events
     .filter(e => e.employee_id === empId && e.data === today)
-    .sort((a, b) => a.ora.localeCompare(b.ora) || a.created - b.created);
+    .filter(e => !remote.some(r => r.tipo === e.tipo && r.ora === e.ora));
+  return remote.concat(local)
+    .sort((a, b) => a.ora.localeCompare(b.ora) || (a.created || 0) - (b.created || 0));
 }
 function presenceOf(empId){
   const evs = todayEventsOf(empId);
@@ -157,8 +181,56 @@ function lastScanOf(empId){
   return evs.length ? evs[evs.length - 1] : null;
 }
 
+/* ---------- Stato condiviso dal registro ---------- */
+function loadRemoteCache(){
+  const r = readStore(REMOTE_KEY, null);
+  if(r && r.date === todayISO() && Array.isArray(r.events)) state.remote = r;
+}
+
+/* L'Apps Script restituisce { date: "dd/MM/yyyy", events: [{id, tipo, ora}] } */
+async function fetchStatus(){
+  const url = state.config.status_url;
+  if(!url || state.statusLoading || !navigator.onLine) return;
+  state.statusLoading = true;
+  const ctrl = ("AbortController" in window) ? new AbortController() : null;
+  const t = ctrl ? setTimeout(() => ctrl.abort(), 9000) : null;
+  try {
+    const res = await fetch(url, { cache: "no-store", signal: ctrl?.signal });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const [d, m, y] = String(data.date || "").split("/");
+    const iso = (y && m && d) ? `${y}-${pad(+m)}-${pad(+d)}` : "";
+    const known = new Set(state.employees.map(e => e.id));
+    const events = (Array.isArray(data.events) ? data.events : [])
+      .map(e => ({ id: String(e.id || ""), tipo: String(e.tipo || "").toLowerCase(), ora: String(e.ora || "").slice(0, 5) }))
+      .filter(e => known.has(e.id) && (e.tipo === "entrata" || e.tipo === "uscita") && /^\d{2}:\d{2}$/.test(e.ora));
+    if(iso === todayISO()){
+      state.remote = { date: iso, events, at: Date.now() };
+      writeStore(REMOTE_KEY, state.remote);
+    }
+  } catch(e) {
+    // Registro non raggiungibile: resta l'ultimo stato noto
+  } finally {
+    if(t) clearTimeout(t);
+    state.statusLoading = false;
+    renderWho();
+  }
+}
+
+function renderWhoUpdated(){
+  const el = $("#who-updated");
+  if(!el) return;
+  if(!state.config.status_url){ el.textContent = "Solo da questo dispositivo"; return; }
+  if(state.remote && state.remote.at && state.remote.date === todayISO()){
+    el.textContent = `Aggiornato alle ${toHM(new Date(state.remote.at))}`;
+  } else {
+    el.textContent = navigator.onLine ? "Aggiornamento…" : "Offline";
+  }
+}
+
 /* ---------- In studio adesso ---------- */
 function renderWho(){
+  renderWhoUpdated();
   const list = $("#who-list");
   if(!list) return;
   const frag = document.createDocumentFragment();
@@ -186,7 +258,7 @@ function attachNetStatus(){
     $("#net-dot")?.classList.toggle("offline", !on);
     const t = $("#net-text"); if(t) t.textContent = on ? "Online" : "Offline";
   };
-  window.addEventListener("online", () => { update(); flushQueue(); });
+  window.addEventListener("online", () => { update(); flushQueue(); fetchStatus(); });
   window.addEventListener("offline", update);
   update();
 }
@@ -256,6 +328,7 @@ async function flushQueue(){
     state.flushing = false;
     renderQueuePill();
     renderHistory();
+    if(!loadQueue().length) setTimeout(fetchStatus, STATUS_AFTER_SEND_MS);
   }
 }
 function retryHeld(requestId){
@@ -293,6 +366,7 @@ async function submitEvent(payload){
     await postJSON(state.config.webhook_url, payload);
     setEventStatus(payload.request_id, "sent");
     renderHistory();
+    setTimeout(fetchStatus, STATUS_AFTER_SEND_MS);
     return "sent";
   } catch(e) {
     enqueue(payload);
@@ -820,6 +894,7 @@ function onVisibility(){
   } else {
     requestWakeLock();
     renderWho();            // a cambio giorno l'elenco si azzera
+    fetchStatus();
     flushQueue();
     if(state.panel === "main") backToScan();
   }
@@ -856,6 +931,7 @@ function mostraApp(){ document.documentElement.classList.add("app-pronta"); }
   wireEvents();
   try {
     await loadData();
+    loadRemoteCache();
     renderWho();
     initManual();
     renderBadges();
@@ -864,9 +940,12 @@ function mostraApp(){ document.documentElement.classList.add("app-pronta"); }
   } finally {
     mostraApp();
   }
+  fetchStatus();
   await setupDetector();
   startCamera();
   requestWakeLock();
   flushQueue();
   setInterval(() => { if(loadQueue().length) flushQueue(); }, 60000);
+  // Stato condiviso: solo con l'app in primo piano, niente letture a vuoto
+  setInterval(() => { if(!document.hidden) fetchStatus(); }, STATUS_EVERY_MS);
 })();
