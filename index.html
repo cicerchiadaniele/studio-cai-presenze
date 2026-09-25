@@ -56,6 +56,15 @@
           <button type="button" class="tipo-btn tipo-btn--uscita" id="btn-uscita" role="radio" aria-checked="false">
             USCITA<small id="hint-uscita"></small>
           </button>
+          <button type="button" class="tipo-btn tipo-btn--assemblea" id="btn-assemblea" role="radio" aria-checked="false">
+            IN ASSEMBLEA<small>scegli il condominio</small>
+          </button>
+        </div>
+        <div class="assemblea-box" id="assemblea-box" hidden>
+          <label for="assemblea-cond">Condominio dell'assemblea</label>
+          <select id="assemblea-cond">
+            <option value="">Scegli il condominio…</option>
+          </select>
         </div>
         <div class="countdown">
           <svg class="ring" viewBox="0 0 40 40" aria-hidden="true">
@@ -119,7 +128,16 @@
                 <label class="seg-btn" for="m-type-entrata">Entrata</label>
                 <input type="radio" name="m-type" id="m-type-uscita" value="uscita">
                 <label class="seg-btn" for="m-type-uscita">Uscita</label>
+                <input type="radio" name="m-type" id="m-type-assemblea" value="assemblea">
+                <label class="seg-btn" for="m-type-assemblea">In assemblea</label>
               </div>
+            </div>
+
+            <div class="field field--span2" id="m-cond-field" hidden>
+              <label for="m-cond">Condominio dell'assemblea <span class="req">*</span></label>
+              <select id="m-cond">
+                <option value="">Scegli il condominio…</option>
+              </select>
             </div>
 
             <div class="field">
@@ -179,7 +197,7 @@
 
     <footer class="footer">
       <span>© <span id="year"></span> Studio CAI</span>
-      <span class="version-badge" id="version-badge">v2.1.1</span>
+      <span class="version-badge" id="version-badge">v2.2.0</span>
     </footer>
   </div>
 
