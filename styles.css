@@ -1,5 +1,5 @@
 /* Studio CAI — Presenze studio
-   v2.1.2 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
+   v2.1.3 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
    fondo crema, Fraunces per i titoli, Manrope per il testo, schede morbide.
 
    FONT
@@ -197,17 +197,35 @@ html.app-pronta .container{opacity:1;animation:none;transition:opacity 160ms eas
 .done-note{margin:0;font-size:14px;color:var(--muted);max-width:40ch}
 .done-note.warn{color:var(--warn);font-weight:600}
 
-/* Riepilogo della giornata dopo l'Uscita (v2.1.2) */
+/* Riepilogo della giornata dopo l'Uscita (v2.1.3) */
+.card--exit{gap:6px;padding-bottom:26px}
+.card--exit .done-note{font-size:13px}
 .riepilogo{
-  width:100%;max-width:340px;margin-top:10px;padding:14px 16px;
-  border:1px solid var(--border);border-radius:var(--r-campo);background-color:var(--campo);
-  text-align:left;
+  width:100%;max-width:360px;margin-top:14px;padding:20px 20px 18px;
+  border-radius:22px;text-align:center;
+  background-color:var(--primary-tenue);
+  background-image:linear-gradient(160deg, #FBF1F4 0%, #F4E4EA 100%);
+  border:1px solid #EEDDE3;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.7);
 }
-.riepilogo-tot{margin:0;font-size:15px;color:var(--text);text-align:center}
-.riepilogo-tot strong{font-family:var(--font-display);font-weight:600;font-size:20px;color:var(--primary);margin-left:4px}
-.riepilogo-turni{list-style:none;margin:10px 0 0;padding:10px 0 0;border-top:1px solid var(--border);display:grid;gap:6px}
-.riepilogo-turni li{display:flex;justify-content:space-between;gap:12px;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
-.riepilogo-turni li span:last-child{color:var(--muted);font-weight:700}
+.rp-saluto{margin:0 0 12px;font-family:var(--font-display);font-weight:600;font-size:19px;color:var(--text)}
+.rp-vuoto{margin:0;font-size:14px;color:var(--muted);font-weight:600}
+.rp-label{margin:0;font-size:11.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--primary);opacity:.8}
+.rp-totale{margin:2px 0 14px;display:flex;align-items:baseline;justify-content:center;gap:4px;color:var(--primary);line-height:1}
+.rp-num{font-family:var(--font-display);font-weight:600;font-size:46px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.rp-unit{font-size:15px;font-weight:800;margin-right:8px;opacity:.75}
+.rp-unit:last-child{margin-right:0}
+.rp-bar{position:relative;height:12px;border-radius:999px;background-color:rgba(139,21,56,.10);overflow:hidden}
+.rp-seg{position:absolute;top:0;bottom:0;border-radius:999px;background-image:linear-gradient(90deg,#A3294F,var(--primary))}
+.rp-scala{display:flex;justify-content:space-between;margin-top:6px;font-size:11px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
+.rp-turni{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:6px}
+.rp-turni li{
+  display:flex;justify-content:space-between;align-items:center;gap:12px;
+  padding:8px 12px;border-radius:12px;background-color:rgba(255,255,255,.75);
+  font-size:13.5px;font-variant-numeric:tabular-nums;
+}
+.rp-orari{font-weight:700;color:var(--text)}
+.rp-durata{font-weight:800;color:var(--primary)}
 
 /* --- Link secondari --- */
 .links{display:flex;gap:9px;justify-content:center;flex-wrap:wrap;padding:2px 0}
