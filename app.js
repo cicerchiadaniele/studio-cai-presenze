@@ -1,34 +1,5 @@
-/* Studio CAI — Presenze studio v2.3.0
+/* Studio CAI — Presenze studio v2.1.1
    Postazione di timbratura con badge QR, allineata a Portieri 2.0.
-
-   NOVITÀ 2.3.0 — Assemblea senza badge, ore come straordinario
-   - "In assemblea" si segna dal pulsante in home, senza badge: collega
-     (ricordato sul telefono) e condominio. Sul registro dello studio va
-     la riga "in assemblea – <Condominio>" come nella 2.2.0.
-   - "Fine assemblea" calcola le ore dall'inizio alla fine, arrotondate
-     per eccesso alla mezz'ora (2 h 05 min → 2,5 ore), e le invia allo
-     scenario "WebApp Portieri" come richiesta Straordinario del codice
-     102/103/104: riga sul foglio presenze, mail al collega, calendario e
-     Telegram, esattamente come uno straordinario dalla webapp portieri.
-     Nessuno scenario Make modificato. Una sola chiamata per la fine.
-   - Nelle note dello straordinario: "Assemblea <Condominio> dalle HH:MM
-     alle HH:MM": l'Apps Script dello stato le legge per sapere che
-     l'assemblea è finita.
-   - L'assemblea in corso resta sul telefono (anche se l'app si chiude) e
-     si può chiudere anche da un altro telefono, leggendo il registro.
-   - Segnata per errore: "annulla senza straordinario" (riga "assemblea
-     annullata – <Condominio>" sul registro dello studio).
-   - Inserimento manuale: Assemblea con ora di inizio e di fine.
-
-   NOVITÀ 2.2.0 — "In assemblea"
-   Oltre a Entrata e Uscita si può segnare "In assemblea" scegliendo il
-   condominio. Sul registro (colonna del tipo) compare "in assemblea –
-   <Condominio>"; lo scenario Make non cambia. L'elenco dei condomini è
-   quello delle cartelle Dropbox scritti_cai (base Airtable Registro
-   Chiavi), passato una volta al mese all'Apps Script dello stato da uno
-   scenario Make dedicato; l'app lo tiene in memoria sul telefono.
-   Chi è in assemblea compare come "In assemblea · <Condominio>" e alla
-   timbratura successiva l'app propone Entrata (rientro).
 
    NOVITÀ 2.1.0 — "In studio adesso" condiviso
    Nella 2.0 il riquadro si basava solo sulle timbrature fatte dallo
@@ -61,17 +32,12 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.3.0";
+const APP_VERSION = "2.1.1";
 const LAST_UPDATE = "2026-09-25";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
-  // Scenario "Studio CAI – WebApp Portieri": riceve gli straordinari
-  straordinari_url: "https://hook.eu1.make.com/25pmcwrlyx8qbgd34n2vf0fxpnfyuekl",
   status_url: ""
 };
-/* Codice del collega nella webapp portieri (schede 102, 103, 104 del
-   foglio presenze). Si può sovrascrivere con "codice" in employees.json. */
-const CODICE_REGISTRO = { STF001: "102", STF002: "103", STF003: "104" };
 const EMPLOYEES_DEFAULT = [
   { id: "STF001", nome: "Simone Pomponi" },
   { id: "STF002", nome: "Marco Reali" },
@@ -89,12 +55,6 @@ const MAX_AUTO_ATTEMPTS = 3;
 const MANUAL_WINDOW_DAYS = 31;
 const POST_TIMEOUT_MS = 10000;
 const REMOTE_KEY = "cai_studio_stato_v1";
-const COND_KEY = "cai_studio_condomini_v1";
-const COND_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;  // l'elenco cambia al massimo una volta al mese
-const TIPI = ["entrata", "uscita", "assemblea", "fine_assemblea", "annullata"];
-const ASS_KEY = "cai_studio_assemblee_v1";   // assemblee aperte da questo telefono
-const ME_KEY = "cai_studio_io_v1";           // collega che usa questo telefono
-const MAX_ASSEMBLEA_MIN = 12 * 60;           // oltre, quasi certamente l'ora è sbagliata
 const STATUS_EVERY_MS = 3 * 60 * 1000;  // aggiornamento mentre l'app è aperta
 const STATUS_AFTER_SEND_MS = 4000;      // rilettura dopo una timbratura
 
@@ -115,9 +75,7 @@ const state = {
   wakeLock: null,
   flushing: false,
   remote: null,            // { date: "YYYY-MM-DD", events: [{id,tipo,ora}], at: ms }
-  statusLoading: false,
-  condomini: [],
-  condLoading: null
+  statusLoading: false
 };
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -151,15 +109,7 @@ function readStore(key, fallback){
 function writeStore(key, value){ try { localStorage.setItem(key, JSON.stringify(value)); } catch(e) {} }
 function initials(nome){ return String(nome || "").split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0].toUpperCase()).join("") || "—"; }
 function empById(id){ return state.employees.find(e => e.id === id); }
-function tipoLabel(t){
-  return t === "entrata" ? "Entrata" : t === "assemblea" ? "In assemblea"
-    : t === "fine_assemblea" ? "Fine assemblea" : t === "annullata" ? "Assemblea annullata" : "Uscita";
-}
-function codiceRegistro(emp){ return String(emp.codice || CODICE_REGISTRO[emp.id] || ""); }
-/* Testo del tipo sul registro: per l'assemblea porta anche il condominio */
-function tipoRegistro(tipo, condominio){
-  return tipo === "assemblea" ? `in assemblea – ${condominio}` : tipo;
-}
+function tipoLabel(t){ return t === "entrata" ? "Entrata" : "Uscita"; }
 
 function toast(text, variant = "ok"){
   const t = $("#toast");
@@ -209,28 +159,19 @@ function setEventStatus(requestId, status){
 function todayEventsOf(empId){
   const today = todayISO();
   const remote = (state.remote && state.remote.date === today)
-    ? state.remote.events.filter(e => e.id === empId).map(e => ({ tipo: e.tipo, ora: e.ora, condominio: e.condominio || "", created: 0 }))
+    ? state.remote.events.filter(e => e.id === empId).map(e => ({ tipo: e.tipo, ora: e.ora, created: 0 }))
     : [];
   const local = loadDay().events
     .filter(e => e.employee_id === empId && e.data === today)
     .filter(e => !remote.some(r => r.tipo === e.tipo && r.ora === e.ora));
-  const sorted = remote.concat(local)
+  return remote.concat(local)
     .sort((a, b) => a.ora.localeCompare(b.ora) || (a.created || 0) - (b.created || 0));
-  // "Assemblea annullata" cancella l'ultima assemblea aperta
-  const out = [];
-  sorted.forEach(e => {
-    if(e.tipo !== "annullata"){ out.push(e); return; }
-    for(let i = out.length - 1; i >= 0; i--){ if(out[i].tipo === "assemblea"){ out.splice(i, 1); break; } }
-  });
-  return out;
 }
 function presenceOf(empId){
   const evs = todayEventsOf(empId);
   const last = evs[evs.length - 1];
   if(!last) return { stato: "none", ora: "" };
-  // Dopo la fine dell'assemblea: "Uscito" (se si rientra, si passa il badge)
-  const stato = last.tipo === "entrata" ? "in" : last.tipo === "assemblea" ? "meet" : "out";
-  return { stato, ora: last.ora, condominio: last.condominio || "" };
+  return { stato: last.tipo === "entrata" ? "in" : "out", ora: last.ora };
 }
 function suggestTipo(empId){
   return presenceOf(empId).stato === "in" ? "uscita" : "entrata";
@@ -261,8 +202,8 @@ async function fetchStatus(){
     const iso = (y && m && d) ? `${y}-${pad(+m)}-${pad(+d)}` : "";
     const known = new Set(state.employees.map(e => e.id));
     const events = (Array.isArray(data.events) ? data.events : [])
-      .map(e => ({ id: String(e.id || ""), tipo: String(e.tipo || "").toLowerCase(), ora: String(e.ora || "").slice(0, 5), condominio: String(e.condominio || "") }))
-      .filter(e => known.has(e.id) && TIPI.includes(e.tipo) && /^\d{2}:\d{2}$/.test(e.ora));
+      .map(e => ({ id: String(e.id || ""), tipo: String(e.tipo || "").toLowerCase(), ora: String(e.ora || "").slice(0, 5) }))
+      .filter(e => known.has(e.id) && (e.tipo === "entrata" || e.tipo === "uscita") && /^\d{2}:\d{2}$/.test(e.ora));
     if(iso === todayISO()){
       state.remote = { date: iso, events, at: Date.now() };
       writeStore(REMOTE_KEY, state.remote);
@@ -274,53 +215,6 @@ async function fetchStatus(){
     state.statusLoading = false;
     renderWho();
   }
-}
-
-/* ---------- Elenco condomini (per "In assemblea") ----------
-   Dall'Apps Script dello stato (?azione=condomini), conservato sul
-   telefono: si riscarica al massimo una volta a settimana. */
-function condominiInCache(){
-  const c = readStore(COND_KEY, null);
-  return c && Array.isArray(c.elenco) ? c : null;
-}
-function applicaCondomini(elenco){
-  state.condomini = elenco.slice().sort((a, b) => a.localeCompare(b, "it"));
-  ["#a-cond", "#m-cond"].forEach(sel => {
-    const el = $(sel);
-    if(!el) return;
-    const keep = el.value;
-    const frag = document.createDocumentFragment();
-    const first = document.createElement("option");
-    first.value = ""; first.textContent = state.condomini.length ? "Scegli il condominio…" : "Elenco non disponibile";
-    frag.appendChild(first);
-    state.condomini.forEach(n => {
-      const o = document.createElement("option");
-      o.value = n; o.textContent = n;
-      frag.appendChild(o);
-    });
-    el.replaceChildren(frag);
-    if(keep && state.condomini.includes(keep)) el.value = keep;
-  });
-}
-function caricaCondomini(forza = false){
-  const c = condominiInCache();
-  if(c && c.elenco.length) applicaCondomini(c.elenco);
-  const fresca = c && c.elenco.length && Date.now() - (c.at || 0) < COND_MAX_AGE_MS;
-  if((fresca && !forza) || !state.config.status_url || !navigator.onLine) return Promise.resolve();
-  if(state.condLoading) return state.condLoading;
-  const sep = state.config.status_url.includes("?") ? "&" : "?";
-  state.condLoading = fetch(`${state.config.status_url}${sep}azione=condomini`, { cache: "no-store" })
-    .then(r => r.ok ? r.json() : Promise.reject())
-    .then(d => {
-      const elenco = (Array.isArray(d.condomini) ? d.condomini : []).map(x => String(x).trim()).filter(Boolean);
-      if(elenco.length){
-        writeStore(COND_KEY, { at: Date.now(), elenco });
-        applicaCondomini(elenco);
-      }
-    })
-    .catch(() => {})
-    .finally(() => { state.condLoading = null; });
-  return state.condLoading;
 }
 
 function renderWhoUpdated(){
@@ -337,7 +231,6 @@ function renderWhoUpdated(){
 /* ---------- In studio adesso ---------- */
 function renderWho(){
   renderWhoUpdated();
-  renderMeet();
   const list = $("#who-list");
   if(!list) return;
   const frag = document.createDocumentFragment();
@@ -352,7 +245,6 @@ function renderWho(){
     st.className = `stato stato--${p.stato}`;
     // Solo lo stato, senza orari (v2.1.1)
     st.textContent = p.stato === "in" ? "In studio"
-      : p.stato === "meet" ? (p.condominio ? `In assemblea · ${p.condominio}` : "In assemblea")
       : p.stato === "out" ? "Uscito" : "Non ancora arrivato";
     li.append(name, st);
     frag.appendChild(li);
@@ -374,10 +266,10 @@ function attachNetStatus(){
 
 function loadQueue(){ return readStore(QUEUE_KEY, []); }
 function saveQueue(q){ writeStore(QUEUE_KEY, q); renderQueuePill(); }
-function enqueue(payload, url){
+function enqueue(payload){
   const q = loadQueue();
   if(!q.some(i => i.payload.request_id === payload.request_id)){
-    q.push({ payload, url: url || "", attempts: 0, queued_at: new Date().toISOString() });
+    q.push({ payload, attempts: 0, queued_at: new Date().toISOString() });
   }
   saveQueue(q);
 }
@@ -422,7 +314,7 @@ async function flushQueue(){
       const item = q[i];
       if((item.attempts || 0) >= MAX_AUTO_ATTEMPTS){ i++; continue; }
       try {
-        await postJSON(item.url || state.config.webhook_url, item.payload);
+        await postJSON(state.config.webhook_url, item.payload);
         q.splice(i, 1);
         saveQueue(q);
         setEventStatus(item.payload.request_id, "sent");
@@ -451,38 +343,34 @@ function retryHeld(requestId){
   flushQueue();
 }
 
-/* Registra: salva sul dispositivo, poi invia; se non va, in coda.
-   meta descrive la voce locale (serve quando il payload non è quello
-   del registro dello studio, come lo straordinario); url il webhook. */
-async function submitEvent(payload, meta = {}, url = ""){
+/* Registra: salva sul dispositivo, poi invia; se non va, in coda. */
+async function submitEvent(payload){
   addEvent({
     request_id: payload.request_id,
-    employee_id: meta.employee_id || payload.employee_id,
-    nome: meta.nome || payload.nome,
-    tipo: meta.tipo || payload.tipo,
-    condominio: meta.condominio || "",
-    ore: meta.ore || null,
-    data: meta.data || payload.data,
-    ora: meta.ora || payload.ora,
-    metodo: meta.metodo || payload.metodo,
+    employee_id: payload.employee_id,
+    nome: payload.nome,
+    tipo: payload.tipo,
+    data: payload.data,
+    ora: payload.ora,
+    metodo: payload.metodo,
     status: "queued",
     created: Date.now()
   });
   renderWho();
 
   if(!navigator.onLine){
-    enqueue(payload, url);
+    enqueue(payload);
     renderHistory();
     return "queued";
   }
   try {
-    await postJSON(url || state.config.webhook_url, payload);
+    await postJSON(state.config.webhook_url, payload);
     setEventStatus(payload.request_id, "sent");
     renderHistory();
     setTimeout(fetchStatus, STATUS_AFTER_SEND_MS);
     return "sent";
   } catch(e) {
-    enqueue(payload, url);
+    enqueue(payload);
     renderHistory();
     return "queued";
   }
@@ -664,7 +552,6 @@ function openRead(emp){
   const tipo = suggestTipo(emp.id);
   state.read = { emp, at, tipo };
   state.mode = "read";
-  writeStore(ME_KEY, emp.id);   // chi passa il badge da questo telefono ne è il titolare
 
   $("#read-initials").textContent = initials(emp.nome);
   $("#read-name").textContent = emp.nome;
@@ -673,13 +560,9 @@ function openRead(emp){
   const p = presenceOf(emp.id);
   $("#read-reason").textContent = p.stato === "in"
     ? "Risulta in studio: proposta Uscita."
-    : p.stato === "meet"
-      ? "Risulta in assemblea: proposta Entrata (rientro)."
     : p.stato === "out"
       ? "Risulta uscito: proposta Entrata (rientro)."
       : "Primo passaggio di oggi: proposta Entrata.";
-  const aperta = openAssemblyOf(emp.id);
-  if(aperta) $("#read-reason").textContent += ` Assemblea ${aperta.condominio} ancora aperta: ricorda Fine assemblea.`;
 
   showMainCard("read");
   selectTipo(tipo, false);
@@ -734,30 +617,25 @@ async function confirmRead(){
     data: toISODate(r.at), ora: toHM(r.at), metodo: "qr"
   });
 
-  const info = { title: `${tipoLabel(r.tipo)} registrata`, sub: `${r.emp.nome} · ore ${payload.ora}` };
-  showDone({ ...info, status: "sending" });
+  showDone({ tipo: r.tipo, nome: r.emp.nome, ora: payload.ora, status: "sending" });
   const res = await submitEvent(payload);
-  showDone({ ...info, status: res });
-  doneThenScan(res);
-}
+  showDone({ tipo: r.tipo, nome: r.emp.nome, ora: payload.ora, status: res });
 
-function doneThenScan(res){
   clearTimeout(state.doneTimer);
   state.doneTimer = setTimeout(backToScan, res === "queued" ? DONE_MS + 1500 : DONE_MS);
 }
 
-function showDone({ title, sub, status, sentNote }){
+function showDone({ tipo, nome, ora, status }){
   state.mode = "done";
-  stopCountdown();
   showMainCard("done");
-  $("#done-title").textContent = title;
-  $("#done-sub").textContent = sub;
+  $("#done-title").textContent = `${tipoLabel(tipo)} registrata`;
+  $("#done-sub").textContent = `${nome} · ore ${ora}`;
   const note = $("#done-note");
   const check = $("#done-check");
   check.classList.toggle("queued", status === "queued");
   note.classList.toggle("warn", status === "queued");
   note.textContent = status === "sending" ? "Invio al registro dello studio…"
-    : status === "sent" ? (sentNote || "Inviata al registro dello studio.")
+    : status === "sent" ? "Inviata al registro dello studio."
     : "Nessuna rete: salvata su questo dispositivo, parte da sola appena torna la connessione.";
 }
 
@@ -779,282 +657,10 @@ function backToScan(){
   }
 }
 
-/* ---------- Assemblea senza badge (v2.3.0) ----------
-   Inizio: riga "in assemblea – <Condominio>" sul registro dello studio
-   (scenario WebApp Dipendenti CAI, come la 2.2.0).
-   Fine: una sola richiesta "Straordinario" allo scenario WebApp Portieri
-   col codice 102/103/104 e le ore arrotondate per eccesso alla mezz'ora.
-   L'assemblea aperta resta salvata sul telefono; se è stata aperta da un
-   altro telefono si ricava dal registro condiviso. */
-function assembleeLocali(){ const a = readStore(ASS_KEY, {}); return a && typeof a === "object" ? a : {}; }
-function salvaAssemblee(a){ writeStore(ASS_KEY, a); }
-
-function openAssemblyOf(empId){
-  if(!empId) return null;
-  const today = todayISO();
-  const store = assembleeLocali();
-  const loc = store[empId];
-  if(loc && loc.data && loc.ora){
-    // Chiusa o annullata da un altro telefono? Allora qui non è più aperta.
-    const remote = (state.remote && state.remote.date === today) ? state.remote.events : [];
-    const chiusa = loc.data === today && remote.some(e => e.id === empId
-      && (e.tipo === "fine_assemblea" || e.tipo === "annullata") && e.ora >= loc.ora);
-    if(!chiusa) return { ...loc };
-    delete store[empId];
-    salvaAssemblee(store);
-  }
-  const evs = todayEventsOf(empId);
-  const last = evs[evs.length - 1];
-  if(last && last.tipo === "assemblea") return { condominio: last.condominio || "", data: today, ora: last.ora, daRegistro: true };
-  return null;
-}
-
-/* Durata e ore di straordinario. La fine prima dell'inizio vuol dire
-   dopo mezzanotte. Ritorna { errore } se i dati non vanno bene. */
-function calcoloStraordinario(inizioData, inizioOra, fineOra){
-  if(!inizioData || !inizioOra || !fineOra) return { errore: "Indica l'ora di fine." };
-  const start = new Date(`${inizioData}T${inizioOra}:00`);
-  const end = new Date(`${inizioData}T${fineOra}:00`);
-  if(isNaN(start) || isNaN(end)) return { errore: "Ora non valida." };
-  if(end.getTime() === start.getTime()) return { errore: "L'ora di fine coincide con l'inizio." };
-  if(end < start) end.setDate(end.getDate() + 1);
-  const min = Math.round((end - start) / 60000);
-  if(end.getTime() > Date.now() + 5 * 60000) return { errore: "L'ora di fine non può essere nel futuro. Controllala." };
-  if(min > MAX_ASSEMBLEA_MIN) return { errore: "Più di 12 ore: controlla l'ora di fine." };
-  const ore = Math.max(0.5, Math.ceil(min / 30) / 2);
-  const dopoMezzanotte = toISODate(end) !== inizioData;
-  return { min, ore, end, dopoMezzanotte };
-}
-function fmtOre(h){ return String(h).replace(".", ","); }
-function fmtDurata(min){
-  const h = Math.floor(min / 60), m = min % 60;
-  if(!h) return `${m} min`;
-  return m ? `${h} h ${pad(m)} min` : `${h} h`;
-}
-/* Ora con cui la fine entra nella giornata: dopo mezzanotte resta
-   sull'ultimo minuto del giorno di inizio (stessa regola dell'Apps Script) */
-function oraFineEvento(calc, fineOra){ return calc.dopoMezzanotte ? "23:59" : fineOra; }
-
-function payloadStraordinario({ emp, condominio, data, inizio, fine, ore, when, nota }){
-  let notes = `Assemblea ${condominio} dalle ${inizio} alle ${fine}`;
-  if(nota) notes += ` · manuale: ${nota}`;
-  return {
-    source: "studio-presenze-webapp",
-    version: APP_VERSION,
-    request_id: uuid(),
-    employee_id: codiceRegistro(emp),
-    event_date: data,
-    event_type: "Straordinario",
-    full_day: false,
-    hours: ore,
-    medical_cert_number: "",
-    ferie_start: "",
-    ferie_end: "",
-    ferie_days: null,
-    ferie_working_days: null,
-    notes,
-    sent_at: when.toISOString()
-  };
-}
-
-function initAssembly(){
-  const sel = $("#a-emp");
-  const frag = document.createDocumentFragment();
-  state.employees.forEach(emp => {
-    const o = document.createElement("option");
-    o.value = emp.id; o.textContent = emp.nome;
-    frag.appendChild(o);
-  });
-  sel.appendChild(frag);
-  sel.addEventListener("change", () => { $("#a-end-time").value = ""; renderAssembly(); });
-  $("#a-cond").addEventListener("change", () => { $("#a-msg").textContent = ""; });
-  $("#a-end-time").addEventListener("input", renderCalc);
-  $("#a-end-time").addEventListener("change", renderCalc);
-  $("#btn-a-now").addEventListener("click", () => { $("#a-end-time").value = toHM(new Date()); renderCalc(); });
-  $("#btn-a-start").addEventListener("click", startAssembly);
-  $("#btn-a-end").addEventListener("click", endAssembly);
-  $("#btn-a-discard").addEventListener("click", discardAssembly);
-}
-
-function prepareAssembly(){
-  const sel = $("#a-emp");
-  const pref = state.assemblyEmp || readStore(ME_KEY, "") || "";
-  state.assemblyEmp = null;
-  if(pref && empById(pref)) sel.value = pref;
-  $("#a-end-time").value = "";
-  $("#a-msg").textContent = "";
-  disarmDiscard();
-  renderAssembly();
-}
-
-function renderAssembly(){
-  const empId = $("#a-emp").value;
-  const open = openAssemblyOf(empId);
-  $("#a-start").hidden = !empId || !!open;
-  $("#a-end").hidden = !open;
-  if(open){
-    const quando = open.data !== todayISO() ? ` del ${formatDay(open.data)}` : "";
-    $("#a-info").textContent = `In assemblea · ${open.condominio || "condominio non indicato"} · iniziata alle ${open.ora}${quando}`;
-    if(!$("#a-end-time").value) $("#a-end-time").value = toHM(new Date());
-    renderCalc();
-  } else if(empId){
-    caricaCondomini();
-  }
-}
-
-function renderCalc(){
-  const box = $("#a-calc");
-  const open = openAssemblyOf($("#a-emp").value);
-  if(!open){ box.hidden = true; return; }
-  const c = calcoloStraordinario(open.data, open.ora, $("#a-end-time").value);
-  box.hidden = false;
-  box.classList.toggle("warn", !!c.errore);
-  box.textContent = c.errore
-    ? c.errore
-    : `Durata ${fmtDurata(c.min)}${c.dopoMezzanotte ? " (dopo mezzanotte)" : ""} → straordinario ${fmtOre(c.ore)} ${c.ore === 1 ? "ora" : "ore"}`;
-  $("#btn-a-end").disabled = !!c.errore;
-}
-
-function setBtnLoading(btn, on){ btn.disabled = on; btn.classList.toggle("loading", on); }
-
-async function startAssembly(){
-  const emp = empById($("#a-emp").value);
-  const cond = $("#a-cond").value;
-  const msg = $("#a-msg");
-  if(!emp){ msg.textContent = "Seleziona il collega."; return; }
-  if(!cond){ msg.textContent = "Scegli il condominio."; $("#a-cond").classList.add("invalid"); return; }
-  $("#a-cond").classList.remove("invalid");
-  if(openAssemblyOf(emp.id)){ renderAssembly(); return; }
-  const btn = $("#btn-a-start");
-  setBtnLoading(btn, true);
-  const now = new Date();
-  const payload = buildPayload({
-    emp, tipo: tipoRegistro("assemblea", cond), when: now,
-    data: toISODate(now), ora: toHM(now), metodo: "app"
-  });
-  const store = assembleeLocali();
-  store[emp.id] = { condominio: cond, data: payload.data, ora: payload.ora, request_id: payload.request_id };
-  salvaAssemblee(store);
-  writeStore(ME_KEY, emp.id);
-  const res = await submitEvent(payload, { tipo: "assemblea", condominio: cond });
-  setBtnLoading(btn, false);
-  $("#a-cond").value = "";
-  switchPanel("main");
-  showDone({
-    title: "Assemblea iniziata",
-    sub: `${emp.nome} · ${cond}`,
-    status: res,
-    sentNote: "A fine assemblea tocca Fine assemblea: le ore vanno sul registro come straordinario."
-  });
-  doneThenScan(res);
-}
-
-async function endAssembly(){
-  const emp = empById($("#a-emp").value);
-  const open = emp && openAssemblyOf(emp.id);
-  const msg = $("#a-msg");
-  if(!emp || !open){ renderAssembly(); return; }
-  if(!codiceRegistro(emp)){ msg.textContent = "Codice del collega sul foglio presenze non trovato."; return; }
-  const fine = $("#a-end-time").value;
-  const c = calcoloStraordinario(open.data, open.ora, fine);
-  if(c.errore){ msg.textContent = c.errore; renderCalc(); return; }
-  const btn = $("#btn-a-end");
-  setBtnLoading(btn, true);
-  const payload = payloadStraordinario({
-    emp, condominio: open.condominio, data: open.data, inizio: open.ora, fine, ore: c.ore, when: c.end
-  });
-  const store = assembleeLocali();
-  delete store[emp.id];
-  salvaAssemblee(store);
-  const res = await submitEvent(payload, {
-    employee_id: emp.id, nome: emp.nome, tipo: "fine_assemblea", condominio: open.condominio,
-    ore: c.ore, data: open.data, ora: oraFineEvento(c, fine), metodo: "app"
-  }, state.config.straordinari_url);
-  setBtnLoading(btn, false);
-  switchPanel("main");
-  showDone({
-    title: "Straordinario registrato",
-    sub: `${emp.nome} · ${open.condominio} · ${fmtOre(c.ore)} ${c.ore === 1 ? "ora" : "ore"}`,
-    status: res,
-    sentNote: `Assemblea dalle ${open.ora} alle ${fine}: inviata al foglio presenze come straordinario.`
-  });
-  doneThenScan(res);
-}
-
-/* Annullamento: doppio tocco, niente finestre di conferma del browser */
-function disarmDiscard(){
-  const b = $("#btn-a-discard");
-  if(!b) return;
-  clearTimeout(disarmDiscard._t);
-  b.classList.remove("armed");
-  b.textContent = "Assemblea segnata per errore: annulla senza straordinario";
-}
-async function discardAssembly(){
-  const b = $("#btn-a-discard");
-  if(!b.classList.contains("armed")){
-    b.classList.add("armed");
-    b.textContent = "Tocca di nuovo per annullare l'assemblea";
-    clearTimeout(disarmDiscard._t);
-    disarmDiscard._t = setTimeout(disarmDiscard, 5000);
-    return;
-  }
-  disarmDiscard();
-  const emp = empById($("#a-emp").value);
-  const open = emp && openAssemblyOf(emp.id);
-  if(!emp || !open){ renderAssembly(); return; }
-  const now = new Date();
-  const payload = buildPayload({
-    emp, tipo: `assemblea annullata – ${open.condominio}`, when: now,
-    data: toISODate(now), ora: toHM(now), metodo: "app"
-  });
-  const store = assembleeLocali();
-  delete store[emp.id];
-  salvaAssemblee(store);
-  const res = await submitEvent(payload, { tipo: "annullata", condominio: open.condominio });
-  switchPanel("main");
-  showDone({ title: "Assemblea annullata", sub: `${emp.nome} · ${open.condominio}`, status: res, sentNote: "Nessuno straordinario registrato." });
-  doneThenScan(res);
-}
-
-/* Riquadro in home con le assemblee aperte da questo telefono (e quella
-   del titolare del telefono, anche se aperta altrove) */
-function renderMeet(){
-  const card = $("#meet-card"), list = $("#meet-list");
-  if(!card || !list) return;
-  const ids = new Set(Object.keys(assembleeLocali()));
-  const me = readStore(ME_KEY, "");
-  if(me) ids.add(me);
-  const frag = document.createDocumentFragment();
-  let n = 0;
-  state.employees.forEach(emp => {
-    if(!ids.has(emp.id)) return;
-    const open = openAssemblyOf(emp.id);
-    if(!open) return;
-    n++;
-    const li = document.createElement("li");
-    li.className = "meet-item";
-    const t = document.createElement("span");
-    t.className = "meet-text";
-    t.textContent = `${emp.nome} · ${open.condominio || "assemblea"}`;
-    const sm = document.createElement("small");
-    sm.textContent = `Iniziata alle ${open.ora}${open.data !== todayISO() ? ` del ${formatDay(open.data)}` : ""}`;
-    t.appendChild(sm);
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "button primary button--meet-solid";
-    b.textContent = "Fine assemblea";
-    b.dataset.end = emp.id;
-    li.append(t, b);
-    frag.appendChild(li);
-  });
-  list.replaceChildren(frag);
-  card.hidden = n === 0;
-}
-
 /* ---------- Pannelli ---------- */
 function switchPanel(name){
   state.panel = name;
-  ["main", "assembly", "manual", "today", "badges"].forEach(p => { $("#panel-" + p).hidden = p !== name; });
+  ["main", "manual", "today", "badges"].forEach(p => { $("#panel-" + p).hidden = p !== name; });
   if(name === "main"){
     backToScan();
   } else {
@@ -1063,7 +669,6 @@ function switchPanel(name){
     stopCamera();              // la fotocamera si spegne fuori dalla postazione
     if(name === "today") renderHistory();
     if(name === "manual") prepareManual();
-    if(name === "assembly") prepareAssembly();
   }
   try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch(e) { window.scrollTo(0, 0); }
 }
@@ -1090,8 +695,6 @@ function renderHistory(){
     time.textContent = ev.ora;
     text.appendChild(time);
     let desc = `${ev.nome} · ${tipoLabel(ev.tipo)}`;
-    if(ev.tipo !== "entrata" && ev.tipo !== "uscita" && ev.condominio) desc += ` (${ev.condominio})`;
-    if(ev.tipo === "fine_assemblea" && ev.ore) desc += ` · straordinario ${fmtOre(ev.ore)} ${ev.ore === 1 ? "ora" : "ore"}`;
     if(ev.metodo === "manuale") desc += " (manuale)";
     if(ev.data !== todayISO()) desc += ` · ${formatDay(ev.data)}`;
     text.appendChild(document.createTextNode(desc));
@@ -1161,9 +764,7 @@ function manualValues(){
     tipo: document.querySelector('input[name="m-type"]:checked')?.value || "",
     data: $("#m-date").value,
     ora: $("#m-time").value,
-    note: $("#m-notes").value.trim(),
-    condominio: $("#m-cond")?.value || "",
-    fine: $("#m-time-end")?.value || ""
+    note: $("#m-notes").value.trim()
   };
 }
 
@@ -1171,27 +772,11 @@ function onManualLive(){
   document.querySelectorAll("#manual-form .invalid").forEach(el => el.classList.remove("invalid"));
   $(".seg")?.classList.remove("invalid-group");
   const v = manualValues();
-  const condField = $("#m-cond-field");
-  const meet = v.tipo === "assemblea";
-  if(condField){
-    if(meet && condField.hidden) caricaCondomini();
-    condField.hidden = !meet;
-  }
-  const endField = $("#m-end-field");
-  if(endField) endField.hidden = !meet;
-  const lbl = $("#m-time-label");
-  if(lbl) lbl.textContent = meet ? "Ora inizio assemblea" : "Ora";
   const emp = empById(v.empId);
   const box = $("#m-summary");
   if(emp && v.tipo && v.data && v.ora){
     box.hidden = false;
-    if(meet){
-      const c = v.fine ? calcoloStraordinario(v.data, v.ora, v.fine) : null;
-      const calc = c && !c.errore ? ` · straordinario ${fmtOre(c.ore)} ${c.ore === 1 ? "ora" : "ore"}` : "";
-      box.textContent = `Stai per inviare: ${emp.nome} · Assemblea${v.condominio ? ` (${v.condominio})` : ""} · ${formatDay(v.data)} dalle ${v.ora}${v.fine ? ` alle ${v.fine}` : ""}${calc}`;
-    } else {
-      box.textContent = `Stai per inviare: ${emp.nome} · ${tipoLabel(v.tipo)} · ${formatDay(v.data)} ore ${v.ora}`;
-    }
+    box.textContent = `Stai per inviare: ${emp.nome} · ${tipoLabel(v.tipo)} · ${formatDay(v.data)} ore ${v.ora}`;
   } else {
     box.hidden = true;
   }
@@ -1199,8 +784,7 @@ function onManualLive(){
 
 function validateManual(v){
   if(!v.empId) return ["#m-employee", "Seleziona il collega."];
-  if(!v.tipo) return [".seg", "Scegli Entrata, Uscita o Assemblea."];
-  if(v.tipo === "assemblea" && !v.condominio) return ["#m-cond", "Scegli il condominio dell'assemblea."];
+  if(!v.tipo) return [".seg", "Scegli Entrata o Uscita."];
   if(!v.data) return ["#m-date", "Indica la data."];
   if(!v.ora) return ["#m-time", "Indica l'ora."];
   const today = todayISO();
@@ -1211,12 +795,6 @@ function validateManual(v){
     const now = new Date();
     const [h, m] = v.ora.split(":").map(Number);
     if(h * 60 + m > now.getHours() * 60 + now.getMinutes() + 5) return ["#m-time", "L'ora non può essere futura."];
-  }
-  if(v.tipo === "assemblea"){
-    if(!v.fine) return ["#m-time-end", "Indica l'ora di fine dell'assemblea."];
-    const c = calcoloStraordinario(v.data, v.ora, v.fine);
-    if(c.errore) return ["#m-time-end", c.errore];
-    if(!codiceRegistro(empById(v.empId))) return ["#m-employee", "Codice del collega sul foglio presenze non trovato."];
   }
   if(v.note.length < 3) return ["#m-notes", "Il motivo è obbligatorio."];
   return null;
@@ -1242,29 +820,14 @@ async function onManualSubmit(ev){
   btn.disabled = true; btn.classList.add("loading");
   msg.textContent = "Invio in corso…";
 
-  const meet = v.tipo === "assemblea";
   const payload = buildPayload({
-    emp, tipo: tipoRegistro(v.tipo, v.condominio), when: new Date(`${v.data}T${v.ora}:00`),
+    emp, tipo: v.tipo, when: new Date(`${v.data}T${v.ora}:00`),
     data: v.data, ora: v.ora, metodo: "manuale", note: v.note
   });
-  let res = await submitEvent(payload, { tipo: v.tipo, condominio: meet ? v.condominio : "" });
-  let recap = `${emp.nome} · ${tipoLabel(v.tipo)} · ${formatDay(v.data)} ore ${v.ora}`;
-
-  // Assemblea: inizio sul registro dello studio + straordinario al foglio presenze
-  if(meet){
-    const c = calcoloStraordinario(v.data, v.ora, v.fine);
-    const sp = payloadStraordinario({
-      emp, condominio: v.condominio, data: v.data, inizio: v.ora, fine: v.fine, ore: c.ore, when: c.end, nota: v.note
-    });
-    const res2 = await submitEvent(sp, {
-      employee_id: emp.id, nome: emp.nome, tipo: "fine_assemblea", condominio: v.condominio,
-      ore: c.ore, data: v.data, ora: oraFineEvento(c, v.fine), metodo: "manuale"
-    }, state.config.straordinari_url);
-    if(res2 !== "sent") res = res2;
-    recap = `${emp.nome} · Assemblea (${v.condominio}) · ${formatDay(v.data)} dalle ${v.ora} alle ${v.fine} · straordinario ${fmtOre(c.ore)} ${c.ore === 1 ? "ora" : "ore"}`;
-  }
+  const res = await submitEvent(payload);
 
   btn.disabled = false; btn.classList.remove("loading");
+  const recap = `${emp.nome} · ${tipoLabel(v.tipo)} · ${formatDay(v.data)} ore ${v.ora}`;
   if(res === "sent"){
     msg.textContent = `Inviata: ${recap}`;
     toast(`Timbratura inviata — ${recap}`, "ok");
@@ -1280,8 +843,6 @@ function resetManual(showToast){
   $("#m-date").value = todayISO();
   $("#m-time").value = toHM(new Date());
   onManualLive();
-  const cf = $("#m-cond-field"); if(cf) cf.hidden = true;
-  const ef = $("#m-end-field"); if(ef) ef.hidden = true;
   if(showToast){ $("#manual-msg").textContent = ""; toast("Campi puliti.", "warn"); }
 }
 
@@ -1343,8 +904,6 @@ function onVisibility(){
 /* ---------- Avvio ---------- */
 function wireEvents(){
   document.addEventListener("click", ev => {
-    const e = ev.target.closest("[data-end]");
-    if(e){ state.assemblyEmp = e.dataset.end; switchPanel("assembly"); return; }
     const p = ev.target.closest("[data-panel]");
     if(p){ switchPanel(p.dataset.panel); return; }
     const r = ev.target.closest("[data-retry]");
@@ -1374,10 +933,8 @@ function mostraApp(){ document.documentElement.classList.add("app-pronta"); }
   try {
     await loadData();
     loadRemoteCache();
-    const cc = condominiInCache(); if(cc && cc.elenco.length) applicaCondomini(cc.elenco);
     renderWho();
     initManual();
-    initAssembly();
     renderBadges();
     renderQueuePill();
     renderHistory();
@@ -1389,7 +946,6 @@ function mostraApp(){ document.documentElement.classList.add("app-pronta"); }
   startCamera();
   requestWakeLock();
   flushQueue();
-  caricaCondomini();
   setInterval(() => { if(loadQueue().length) flushQueue(); }, 60000);
   // Stato condiviso: solo con l'app in primo piano, niente letture a vuoto
   setInterval(() => { if(!document.hidden) fetchStatus(); }, STATUS_EVERY_MS);
