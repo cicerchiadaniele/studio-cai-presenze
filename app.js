@@ -1,5 +1,15 @@
-/* Studio CAI — Presenze studio v2.1.1
+/* Studio CAI — Presenze studio v2.2.0
    Postazione di timbratura con badge QR, allineata a Portieri 2.0.
+
+   NOVITÀ 2.2.0 — "In assemblea"
+   Oltre a Entrata e Uscita si può segnare "In assemblea" scegliendo il
+   condominio. Sul registro (colonna del tipo) compare "in assemblea –
+   <Condominio>"; lo scenario Make non cambia. L'elenco dei condomini è
+   quello delle cartelle Dropbox scritti_cai (base Airtable Registro
+   Chiavi), passato una volta al mese all'Apps Script dello stato da uno
+   scenario Make dedicato; l'app lo tiene in memoria sul telefono.
+   Chi è in assemblea compare come "In assemblea · <Condominio>" e alla
+   timbratura successiva l'app propone Entrata (rientro).
 
    NOVITÀ 2.1.0 — "In studio adesso" condiviso
    Nella 2.0 il riquadro si basava solo sulle timbrature fatte dallo
@@ -32,7 +42,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.1.1";
+const APP_VERSION = "2.2.0";
 const LAST_UPDATE = "2026-09-25";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -55,6 +65,9 @@ const MAX_AUTO_ATTEMPTS = 3;
 const MANUAL_WINDOW_DAYS = 31;
 const POST_TIMEOUT_MS = 10000;
 const REMOTE_KEY = "cai_studio_stato_v1";
+const COND_KEY = "cai_studio_condomini_v1";
+const COND_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;  // l'elenco cambia al massimo una volta al mese
+const TIPI = ["entrata", "uscita", "assemblea"];
 const STATUS_EVERY_MS = 3 * 60 * 1000;  // aggiornamento mentre l'app è aperta
 const STATUS_AFTER_SEND_MS = 4000;      // rilettura dopo una timbratura
 
@@ -75,7 +88,9 @@ const state = {
   wakeLock: null,
   flushing: false,
   remote: null,            // { date: "YYYY-MM-DD", events: [{id,tipo,ora}], at: ms }
-  statusLoading: false
+  statusLoading: false,
+  condomini: [],
+  condLoading: null
 };
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -109,7 +124,11 @@ function readStore(key, fallback){
 function writeStore(key, value){ try { localStorage.setItem(key, JSON.stringify(value)); } catch(e) {} }
 function initials(nome){ return String(nome || "").split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0].toUpperCase()).join("") || "—"; }
 function empById(id){ return state.employees.find(e => e.id === id); }
-function tipoLabel(t){ return t === "entrata" ? "Entrata" : "Uscita"; }
+function tipoLabel(t){ return t === "entrata" ? "Entrata" : t === "assemblea" ? "In assemblea" : "Uscita"; }
+/* Testo del tipo sul registro: per l'assemblea porta anche il condominio */
+function tipoRegistro(tipo, condominio){
+  return tipo === "assemblea" ? `in assemblea – ${condominio}` : tipo;
+}
 
 function toast(text, variant = "ok"){
   const t = $("#toast");
@@ -159,7 +178,7 @@ function setEventStatus(requestId, status){
 function todayEventsOf(empId){
   const today = todayISO();
   const remote = (state.remote && state.remote.date === today)
-    ? state.remote.events.filter(e => e.id === empId).map(e => ({ tipo: e.tipo, ora: e.ora, created: 0 }))
+    ? state.remote.events.filter(e => e.id === empId).map(e => ({ tipo: e.tipo, ora: e.ora, condominio: e.condominio || "", created: 0 }))
     : [];
   const local = loadDay().events
     .filter(e => e.employee_id === empId && e.data === today)
@@ -171,7 +190,8 @@ function presenceOf(empId){
   const evs = todayEventsOf(empId);
   const last = evs[evs.length - 1];
   if(!last) return { stato: "none", ora: "" };
-  return { stato: last.tipo === "entrata" ? "in" : "out", ora: last.ora };
+  const stato = last.tipo === "entrata" ? "in" : last.tipo === "assemblea" ? "meet" : "out";
+  return { stato, ora: last.ora, condominio: last.condominio || "" };
 }
 function suggestTipo(empId){
   return presenceOf(empId).stato === "in" ? "uscita" : "entrata";
@@ -202,8 +222,8 @@ async function fetchStatus(){
     const iso = (y && m && d) ? `${y}-${pad(+m)}-${pad(+d)}` : "";
     const known = new Set(state.employees.map(e => e.id));
     const events = (Array.isArray(data.events) ? data.events : [])
-      .map(e => ({ id: String(e.id || ""), tipo: String(e.tipo || "").toLowerCase(), ora: String(e.ora || "").slice(0, 5) }))
-      .filter(e => known.has(e.id) && (e.tipo === "entrata" || e.tipo === "uscita") && /^\d{2}:\d{2}$/.test(e.ora));
+      .map(e => ({ id: String(e.id || ""), tipo: String(e.tipo || "").toLowerCase(), ora: String(e.ora || "").slice(0, 5), condominio: String(e.condominio || "") }))
+      .filter(e => known.has(e.id) && TIPI.includes(e.tipo) && /^\d{2}:\d{2}$/.test(e.ora));
     if(iso === todayISO()){
       state.remote = { date: iso, events, at: Date.now() };
       writeStore(REMOTE_KEY, state.remote);
@@ -215,6 +235,53 @@ async function fetchStatus(){
     state.statusLoading = false;
     renderWho();
   }
+}
+
+/* ---------- Elenco condomini (per "In assemblea") ----------
+   Dall'Apps Script dello stato (?azione=condomini), conservato sul
+   telefono: si riscarica al massimo una volta a settimana. */
+function condominiInCache(){
+  const c = readStore(COND_KEY, null);
+  return c && Array.isArray(c.elenco) ? c : null;
+}
+function applicaCondomini(elenco){
+  state.condomini = elenco.slice().sort((a, b) => a.localeCompare(b, "it"));
+  ["#assemblea-cond", "#m-cond"].forEach(sel => {
+    const el = $(sel);
+    if(!el) return;
+    const keep = el.value;
+    const frag = document.createDocumentFragment();
+    const first = document.createElement("option");
+    first.value = ""; first.textContent = state.condomini.length ? "Scegli il condominio…" : "Elenco non disponibile";
+    frag.appendChild(first);
+    state.condomini.forEach(n => {
+      const o = document.createElement("option");
+      o.value = n; o.textContent = n;
+      frag.appendChild(o);
+    });
+    el.replaceChildren(frag);
+    if(keep && state.condomini.includes(keep)) el.value = keep;
+  });
+}
+function caricaCondomini(forza = false){
+  const c = condominiInCache();
+  if(c && c.elenco.length) applicaCondomini(c.elenco);
+  const fresca = c && c.elenco.length && Date.now() - (c.at || 0) < COND_MAX_AGE_MS;
+  if((fresca && !forza) || !state.config.status_url || !navigator.onLine) return Promise.resolve();
+  if(state.condLoading) return state.condLoading;
+  const sep = state.config.status_url.includes("?") ? "&" : "?";
+  state.condLoading = fetch(`${state.config.status_url}${sep}azione=condomini`, { cache: "no-store" })
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(d => {
+      const elenco = (Array.isArray(d.condomini) ? d.condomini : []).map(x => String(x).trim()).filter(Boolean);
+      if(elenco.length){
+        writeStore(COND_KEY, { at: Date.now(), elenco });
+        applicaCondomini(elenco);
+      }
+    })
+    .catch(() => {})
+    .finally(() => { state.condLoading = null; });
+  return state.condLoading;
 }
 
 function renderWhoUpdated(){
@@ -245,6 +312,7 @@ function renderWho(){
     st.className = `stato stato--${p.stato}`;
     // Solo lo stato, senza orari (v2.1.1)
     st.textContent = p.stato === "in" ? "In studio"
+      : p.stato === "meet" ? (p.condominio ? `In assemblea · ${p.condominio}` : "In assemblea")
       : p.stato === "out" ? "Uscito" : "Non ancora arrivato";
     li.append(name, st);
     frag.appendChild(li);
@@ -344,12 +412,13 @@ function retryHeld(requestId){
 }
 
 /* Registra: salva sul dispositivo, poi invia; se non va, in coda. */
-async function submitEvent(payload){
+async function submitEvent(payload, meta = {}){
   addEvent({
     request_id: payload.request_id,
     employee_id: payload.employee_id,
     nome: payload.nome,
-    tipo: payload.tipo,
+    tipo: meta.tipo || payload.tipo,
+    condominio: meta.condominio || "",
     data: payload.data,
     ora: payload.ora,
     metodo: payload.metodo,
@@ -560,6 +629,8 @@ function openRead(emp){
   const p = presenceOf(emp.id);
   $("#read-reason").textContent = p.stato === "in"
     ? "Risulta in studio: proposta Uscita."
+    : p.stato === "meet"
+      ? "Risulta in assemblea: proposta Entrata (rientro)."
     : p.stato === "out"
       ? "Risulta uscito: proposta Entrata (rientro)."
       : "Primo passaggio di oggi: proposta Entrata.";
@@ -578,6 +649,23 @@ function selectTipo(tipo, restart = true){
     $(b).setAttribute("aria-checked", String(t === tipo));
     $(h).textContent = t === tipo ? (t === suggested ? "proposto" : "scelto") : "tocca per scegliere";
   });
+  const meet = tipo === "assemblea";
+  $("#btn-assemblea").setAttribute("aria-checked", String(meet));
+  $("#assemblea-box").hidden = !meet;
+  $(".countdown").hidden = meet;
+
+  if(meet){
+    // Con l'assemblea niente registrazione automatica: prima il condominio
+    stopCountdown();
+    const sel = $("#assemblea-cond");
+    sel.value = "";
+    state.read.condominio = "";
+    $("#btn-conferma").disabled = true;
+    caricaCondomini().then(() => { try { sel.focus(); } catch(e) {} });
+    return;
+  }
+  state.read.condominio = "";
+  $("#btn-conferma").disabled = false;
   if(restart) startCountdown();
 }
 
@@ -612,24 +700,33 @@ async function confirmRead(){
   if(!r) return;
   state.read = null;
 
+  if(r.tipo === "assemblea" && !r.condominio){
+    toast("Scegli il condominio dell'assemblea.", "warn");
+    state.read = r;
+    return;
+  }
+
   const payload = buildPayload({
-    emp: r.emp, tipo: r.tipo, when: r.at,
+    emp: r.emp, tipo: tipoRegistro(r.tipo, r.condominio), when: r.at,
     data: toISODate(r.at), ora: toHM(r.at), metodo: "qr"
   });
 
-  showDone({ tipo: r.tipo, nome: r.emp.nome, ora: payload.ora, status: "sending" });
-  const res = await submitEvent(payload);
-  showDone({ tipo: r.tipo, nome: r.emp.nome, ora: payload.ora, status: res });
+  const info = { tipo: r.tipo, condominio: r.condominio, nome: r.emp.nome, ora: payload.ora };
+  showDone({ ...info, status: "sending" });
+  const res = await submitEvent(payload, { tipo: r.tipo, condominio: r.condominio });
+  showDone({ ...info, status: res });
 
   clearTimeout(state.doneTimer);
   state.doneTimer = setTimeout(backToScan, res === "queued" ? DONE_MS + 1500 : DONE_MS);
 }
 
-function showDone({ tipo, nome, ora, status }){
+function showDone({ tipo, condominio, nome, ora, status }){
   state.mode = "done";
   showMainCard("done");
-  $("#done-title").textContent = `${tipoLabel(tipo)} registrata`;
-  $("#done-sub").textContent = `${nome} · ore ${ora}`;
+  $("#done-title").textContent = tipo === "assemblea" ? "Assemblea registrata" : `${tipoLabel(tipo)} registrata`;
+  $("#done-sub").textContent = tipo === "assemblea" && condominio
+    ? `${nome} · ${condominio} · ore ${ora}`
+    : `${nome} · ore ${ora}`;
   const note = $("#done-note");
   const check = $("#done-check");
   check.classList.toggle("queued", status === "queued");
@@ -695,6 +792,7 @@ function renderHistory(){
     time.textContent = ev.ora;
     text.appendChild(time);
     let desc = `${ev.nome} · ${tipoLabel(ev.tipo)}`;
+    if(ev.tipo === "assemblea" && ev.condominio) desc += ` (${ev.condominio})`;
     if(ev.metodo === "manuale") desc += " (manuale)";
     if(ev.data !== todayISO()) desc += ` · ${formatDay(ev.data)}`;
     text.appendChild(document.createTextNode(desc));
@@ -764,7 +862,8 @@ function manualValues(){
     tipo: document.querySelector('input[name="m-type"]:checked')?.value || "",
     data: $("#m-date").value,
     ora: $("#m-time").value,
-    note: $("#m-notes").value.trim()
+    note: $("#m-notes").value.trim(),
+    condominio: $("#m-cond")?.value || ""
   };
 }
 
@@ -772,11 +871,18 @@ function onManualLive(){
   document.querySelectorAll("#manual-form .invalid").forEach(el => el.classList.remove("invalid"));
   $(".seg")?.classList.remove("invalid-group");
   const v = manualValues();
+  const condField = $("#m-cond-field");
+  if(condField){
+    const meet = v.tipo === "assemblea";
+    if(meet && condField.hidden) caricaCondomini();
+    condField.hidden = !meet;
+  }
   const emp = empById(v.empId);
   const box = $("#m-summary");
   if(emp && v.tipo && v.data && v.ora){
     box.hidden = false;
-    box.textContent = `Stai per inviare: ${emp.nome} · ${tipoLabel(v.tipo)} · ${formatDay(v.data)} ore ${v.ora}`;
+    const cond = v.tipo === "assemblea" && v.condominio ? ` (${v.condominio})` : "";
+    box.textContent = `Stai per inviare: ${emp.nome} · ${tipoLabel(v.tipo)}${cond} · ${formatDay(v.data)} ore ${v.ora}`;
   } else {
     box.hidden = true;
   }
@@ -784,7 +890,8 @@ function onManualLive(){
 
 function validateManual(v){
   if(!v.empId) return ["#m-employee", "Seleziona il collega."];
-  if(!v.tipo) return [".seg", "Scegli Entrata o Uscita."];
+  if(!v.tipo) return [".seg", "Scegli Entrata, Uscita o In assemblea."];
+  if(v.tipo === "assemblea" && !v.condominio) return ["#m-cond", "Scegli il condominio dell'assemblea."];
   if(!v.data) return ["#m-date", "Indica la data."];
   if(!v.ora) return ["#m-time", "Indica l'ora."];
   const today = todayISO();
@@ -821,13 +928,13 @@ async function onManualSubmit(ev){
   msg.textContent = "Invio in corso…";
 
   const payload = buildPayload({
-    emp, tipo: v.tipo, when: new Date(`${v.data}T${v.ora}:00`),
+    emp, tipo: tipoRegistro(v.tipo, v.condominio), when: new Date(`${v.data}T${v.ora}:00`),
     data: v.data, ora: v.ora, metodo: "manuale", note: v.note
   });
-  const res = await submitEvent(payload);
+  const res = await submitEvent(payload, { tipo: v.tipo, condominio: v.tipo === "assemblea" ? v.condominio : "" });
 
   btn.disabled = false; btn.classList.remove("loading");
-  const recap = `${emp.nome} · ${tipoLabel(v.tipo)} · ${formatDay(v.data)} ore ${v.ora}`;
+  const recap = `${emp.nome} · ${tipoLabel(v.tipo)}${v.tipo === "assemblea" ? ` (${v.condominio})` : ""} · ${formatDay(v.data)} ore ${v.ora}`;
   if(res === "sent"){
     msg.textContent = `Inviata: ${recap}`;
     toast(`Timbratura inviata — ${recap}`, "ok");
@@ -843,6 +950,7 @@ function resetManual(showToast){
   $("#m-date").value = todayISO();
   $("#m-time").value = toHM(new Date());
   onManualLive();
+  const cf = $("#m-cond-field"); if(cf) cf.hidden = true;
   if(showToast){ $("#manual-msg").textContent = ""; toast("Campi puliti.", "warn"); }
 }
 
@@ -911,6 +1019,12 @@ function wireEvents(){
   });
   $("#btn-entrata").addEventListener("click", () => selectTipo("entrata"));
   $("#btn-uscita").addEventListener("click", () => selectTipo("uscita"));
+  $("#btn-assemblea").addEventListener("click", () => selectTipo("assemblea"));
+  $("#assemblea-cond").addEventListener("change", ev => {
+    if(!state.read) return;
+    state.read.condominio = ev.target.value;
+    $("#btn-conferma").disabled = !ev.target.value;
+  });
   $("#btn-annulla").addEventListener("click", cancelRead);
   $("#btn-conferma").addEventListener("click", confirmRead);
   $("#btn-camera").addEventListener("click", startCamera);
@@ -933,6 +1047,7 @@ function mostraApp(){ document.documentElement.classList.add("app-pronta"); }
   try {
     await loadData();
     loadRemoteCache();
+    const cc = condominiInCache(); if(cc && cc.elenco.length) applicaCondomini(cc.elenco);
     renderWho();
     initManual();
     renderBadges();
@@ -946,6 +1061,7 @@ function mostraApp(){ document.documentElement.classList.add("app-pronta"); }
   startCamera();
   requestWakeLock();
   flushQueue();
+  caricaCondomini();
   setInterval(() => { if(loadQueue().length) flushQueue(); }, 60000);
   // Stato condiviso: solo con l'app in primo piano, niente letture a vuoto
   setInterval(() => { if(!document.hidden) fetchStatus(); }, STATUS_EVERY_MS);
