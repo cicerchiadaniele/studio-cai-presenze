@@ -1,5 +1,12 @@
-/* Studio CAI — Presenze studio v2.1.1
+/* Studio CAI — Presenze studio v2.1.2
    Postazione di timbratura con badge QR, allineata a Portieri 2.0.
+
+   NOVITÀ 2.1.2 — Riepilogo all'uscita
+   Dopo l'Uscita la schermata di esito mostra il riepilogo della giornata
+   del collega: i passaggi di oggi (entrata → uscita) e il tempo totale in
+   studio (i singoli tratti solo se sono più di uno). Dati: registro
+   condiviso + timbrature di questo dispositivo.
+   La schermata resta 8 secondi (un tocco la chiude).
 
    NOVITÀ 2.1.0 — "In studio adesso" condiviso
    Nella 2.0 il riquadro si basava solo sulle timbrature fatte dallo
@@ -32,7 +39,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.1.1";
+const APP_VERSION = "2.1.2";
 const LAST_UPDATE = "2026-09-25";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -50,6 +57,7 @@ const DAY_KEY = "cai_studio_oggi_v1";
 const COUNTDOWN_S = 4;              // secondi prima della registrazione automatica
 const COOLDOWN_MS = 2 * 60 * 1000;  // stesso badge entro 2 minuti: ignorato
 const DONE_MS = 3000;               // durata della schermata di esito
+const DONE_EXIT_MS = 8000;          // dopo l'Uscita, con il riepilogo della giornata
 const SCAN_EVERY_MS = 160;          // cadenza di analisi dei fotogrammi
 const MAX_AUTO_ATTEMPTS = 3;
 const MANUAL_WINDOW_DAYS = 31;
@@ -620,9 +628,61 @@ async function confirmRead(){
   showDone({ tipo: r.tipo, nome: r.emp.nome, ora: payload.ora, status: "sending" });
   const res = await submitEvent(payload);
   showDone({ tipo: r.tipo, nome: r.emp.nome, ora: payload.ora, status: res });
+  renderRiepilogo(r.tipo === "uscita" ? r.emp.id : null);
 
   clearTimeout(state.doneTimer);
-  state.doneTimer = setTimeout(backToScan, res === "queued" ? DONE_MS + 1500 : DONE_MS);
+  const ms = r.tipo === "uscita" ? DONE_EXIT_MS : (res === "queued" ? DONE_MS + 1500 : DONE_MS);
+  state.doneTimer = setTimeout(backToScan, ms);
+}
+
+/* ---------- Riepilogo della giornata (dopo l'Uscita) ----------
+   Coppie entrata → uscita di oggi, in ordine di orario, e tempo totale.
+   Un'uscita senza entrata prima non conta; un'entrata senza uscita
+   (non dovrebbe capitare, l'ultimo passaggio è l'uscita) resta aperta. */
+function giornataDi(empId){
+  const toMin = hm => { const [h, m] = hm.split(":").map(Number); return h * 60 + m; };
+  const turni = [];
+  let aperto = null;
+  todayEventsOf(empId).forEach(e => {
+    if(e.tipo === "entrata"){ if(!aperto) aperto = e.ora; }
+    else if(e.tipo === "uscita" && aperto){
+      turni.push({ da: aperto, a: e.ora, min: Math.max(0, toMin(e.ora) - toMin(aperto)) });
+      aperto = null;
+    }
+  });
+  return { turni, totale: turni.reduce((s, t) => s + t.min, 0) };
+}
+function fmtDurata(min){
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? `${h} h ${pad(m)} min` : `${m} min`;
+}
+function renderRiepilogo(empId){
+  const box = $("#done-riepilogo");
+  if(!box) return;
+  if(!empId){ box.hidden = true; return; }
+  const g = giornataDi(empId);
+  const frag = document.createDocumentFragment();
+  const head = document.createElement("p");
+  head.className = "riepilogo-tot";
+  head.innerHTML = g.turni.length
+    ? `Oggi in studio <strong>${fmtDurata(g.totale)}</strong>`
+    : "Nessuna entrata registrata oggi";
+  frag.appendChild(head);
+  // Dettaglio dei tratti solo se nella giornata ce n'è più di uno
+  if(g.turni.length > 1){
+    const ul = document.createElement("ul");
+    ul.className = "riepilogo-turni";
+    g.turni.forEach(t => {
+      const li = document.createElement("li");
+      const a = document.createElement("span"); a.textContent = `${t.da} → ${t.a}`;
+      const b = document.createElement("span"); b.textContent = fmtDurata(t.min);
+      li.append(a, b);
+      ul.appendChild(li);
+    });
+    frag.appendChild(ul);
+  }
+  box.replaceChildren(frag);
+  box.hidden = false;
 }
 
 function showDone({ tipo, nome, ora, status }){
@@ -630,6 +690,7 @@ function showDone({ tipo, nome, ora, status }){
   showMainCard("done");
   $("#done-title").textContent = `${tipoLabel(tipo)} registrata`;
   $("#done-sub").textContent = `${nome} · ore ${ora}`;
+  if(status === "sending") renderRiepilogo(null);
   const note = $("#done-note");
   const check = $("#done-check");
   check.classList.toggle("queued", status === "queued");
