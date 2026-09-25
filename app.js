@@ -1,4 +1,4 @@
-/* Studio CAI — Presenze studio v2.1.0
+/* Studio CAI — Presenze studio v2.1.1
    Postazione di timbratura con badge QR, allineata a Portieri 2.0.
 
    NOVITÀ 2.1.0 — "In studio adesso" condiviso
@@ -32,7 +32,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.1.1";
 const LAST_UPDATE = "2026-09-25";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -243,8 +243,9 @@ function renderWho(){
     name.textContent = emp.nome;
     const st = document.createElement("span");
     st.className = `stato stato--${p.stato}`;
-    st.textContent = p.stato === "in" ? `In studio dalle ${p.ora}`
-      : p.stato === "out" ? `Uscito alle ${p.ora}` : "Non ancora arrivato";
+    // Solo lo stato, senza orari (v2.1.1)
+    st.textContent = p.stato === "in" ? "In studio"
+      : p.stato === "out" ? "Uscito" : "Non ancora arrivato";
     li.append(name, st);
     frag.appendChild(li);
   });
@@ -558,9 +559,9 @@ function openRead(emp){
 
   const p = presenceOf(emp.id);
   $("#read-reason").textContent = p.stato === "in"
-    ? `Risulta in studio dalle ${p.ora}: proposta Uscita.`
+    ? "Risulta in studio: proposta Uscita."
     : p.stato === "out"
-      ? `Uscito alle ${p.ora}: proposta Entrata (rientro).`
+      ? "Risulta uscito: proposta Entrata (rientro)."
       : "Primo passaggio di oggi: proposta Entrata.";
 
   showMainCard("read");
