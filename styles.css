@@ -1,5 +1,5 @@
 /* Studio CAI — Presenze studio
-   v2.1.3 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
+   v2.1.4 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
    fondo crema, Fraunces per i titoli, Manrope per il testo, schede morbide.
 
    FONT
@@ -76,10 +76,14 @@ html.app-pronta .container{opacity:1;animation:none;transition:opacity 160ms eas
 /* --- Testata --- */
 .header{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:22px;flex-wrap:wrap}
 .brand{display:flex;gap:14px;align-items:center}
-.logo-img{
-  width:56px;height:56px;border-radius:16px;
-  box-shadow:0 2px 8px -4px rgba(42,35,32,.3);
+/* Logo dello studio, lo stesso delle altre webapp (v2.1.4) */
+.logo-box{
+  width:64px;height:64px;flex:none;
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;border-radius:16px;background-color:#fff;
+  box-shadow:0 2px 8px -4px rgba(42,35,32,.2), 0 0 0 1px var(--border);
 }
+.logo-box img{width:100%;height:100%;object-fit:contain;padding:4px;display:block}
 .brand-text h1{
   font-family:var(--font-display);font-weight:600;
   font-size:26px;line-height:1.1;letter-spacing:-.015em;margin:0;
@@ -368,7 +372,7 @@ input[type="date"],input[type="time"]{cursor:pointer}
   .card{padding:24px 20px;border-radius:24px}
   .card--scan{padding:14px}
   .brand-text h1{font-size:23px}
-  .logo-img{width:50px;height:50px;border-radius:14px}
+  .logo-box{width:56px;height:56px;border-radius:14px}
   .grid{grid-template-columns:1fr;gap:18px}
   .field--span2{grid-column:auto}
   input,select,textarea{font-size:16px}
