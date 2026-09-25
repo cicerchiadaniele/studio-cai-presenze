@@ -31,12 +31,6 @@
     <!-- ===== Postazione ===== -->
     <main id="panel-main" class="panel">
 
-      <!-- Assemblee in corso da questo telefono: Fine assemblea a portata di dito -->
-      <section class="card card--meet" id="meet-card" hidden aria-labelledby="meet-title">
-        <h2 id="meet-title">Assemblea in corso</h2>
-        <ul class="meet-list" id="meet-list"></ul>
-      </section>
-
       <!-- Fotocamera: sempre accesa, basta avvicinare il badge -->
       <section class="card card--scan" id="scan-card" aria-label="Lettura badge">
         <div class="scanner-wrap">
@@ -87,8 +81,6 @@
         <p class="done-note" id="done-note"></p>
       </section>
 
-      <button type="button" class="button button--meet" id="btn-open-assembly" data-panel="assembly">In assemblea<small>senza badge · scegli il condominio</small></button>
-
       <section class="card card--who" aria-labelledby="who-title">
         <div class="who-head">
           <h2 id="who-title">In studio adesso</h2>
@@ -103,54 +95,6 @@
         <button type="button" class="chip" data-panel="badges">Badge</button>
       </nav>
     </main>
-
-    <!-- ===== Assemblea (senza badge) ===== -->
-    <section id="panel-assembly" class="panel" hidden>
-      <div class="card">
-        <button type="button" class="back-btn" data-panel="main">← Torna alla postazione</button>
-        <h2>Assemblea</h2>
-        <p class="muted">Senza badge. Tocca <strong>Inizia assemblea</strong> quando parti e <strong>Fine assemblea</strong> quando finisce: le ore vanno sul registro come straordinario, arrotondate per eccesso alla mezz'ora.</p>
-
-        <div class="grid">
-          <div class="field field--span2">
-            <label for="a-emp">Collega <span class="req">*</span></label>
-            <select id="a-emp">
-              <option value="">Seleziona…</option>
-            </select>
-          </div>
-        </div>
-
-        <div id="a-start" class="a-block" hidden>
-          <div class="field">
-            <label for="a-cond">Condominio <span class="req">*</span></label>
-            <select id="a-cond">
-              <option value="">Scegli il condominio…</option>
-            </select>
-          </div>
-          <div class="actions">
-            <button type="button" class="button primary button--meet-solid" id="btn-a-start">Inizia assemblea<span class="spinner" aria-hidden="true"></span></button>
-          </div>
-        </div>
-
-        <div id="a-end" class="a-block" hidden>
-          <p class="meet-info" id="a-info"></p>
-          <div class="field">
-            <label for="a-end-time">Fine assemblea alle <span class="req">*</span></label>
-            <input type="time" id="a-end-time">
-            <div class="date-shortcuts">
-              <button type="button" class="chip" id="btn-a-now">Adesso</button>
-            </div>
-          </div>
-          <p class="summary" id="a-calc"></p>
-          <div class="actions">
-            <button type="button" class="button primary button--meet-solid" id="btn-a-end">Fine assemblea<span class="spinner" aria-hidden="true"></span></button>
-          </div>
-          <button type="button" class="link-btn" id="btn-a-discard">Assemblea segnata per errore: annulla senza straordinario</button>
-        </div>
-
-        <p class="form-msg" id="a-msg" aria-live="polite"></p>
-      </div>
-    </section>
 
     <!-- ===== Inserimento manuale ===== -->
     <section id="panel-manual" class="panel" hidden>
@@ -175,16 +119,7 @@
                 <label class="seg-btn" for="m-type-entrata">Entrata</label>
                 <input type="radio" name="m-type" id="m-type-uscita" value="uscita">
                 <label class="seg-btn" for="m-type-uscita">Uscita</label>
-                <input type="radio" name="m-type" id="m-type-assemblea" value="assemblea">
-                <label class="seg-btn" for="m-type-assemblea">Assemblea</label>
               </div>
-            </div>
-
-            <div class="field field--span2" id="m-cond-field" hidden>
-              <label for="m-cond">Condominio dell'assemblea <span class="req">*</span></label>
-              <select id="m-cond">
-                <option value="">Scegli il condominio…</option>
-              </select>
             </div>
 
             <div class="field">
@@ -197,16 +132,11 @@
             </div>
 
             <div class="field">
-              <label for="m-time"><span id="m-time-label">Ora</span> <span class="req">*</span></label>
+              <label for="m-time">Ora <span class="req">*</span></label>
               <input type="time" id="m-time" required>
               <div class="date-shortcuts">
                 <button type="button" class="chip" id="btn-now">Adesso</button>
               </div>
-            </div>
-
-            <div class="field" id="m-end-field" hidden>
-              <label for="m-time-end">Ora fine assemblea <span class="req">*</span></label>
-              <input type="time" id="m-time-end">
             </div>
 
             <div class="field field--span2">
@@ -249,7 +179,7 @@
 
     <footer class="footer">
       <span>© <span id="year"></span> Studio CAI</span>
-      <span class="version-badge" id="version-badge">v2.3.0</span>
+      <span class="version-badge" id="version-badge">v2.1.1</span>
     </footer>
   </div>
 
