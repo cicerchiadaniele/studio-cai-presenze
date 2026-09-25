@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#8B1538">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Studio CAI — Presenze studio</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icon.svg">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="container">
+
+    <header class="header">
+      <div class="brand">
+        <img class="logo-img" src="./icon.svg" alt="Studio CAI" width="56" height="56">
+        <div class="brand-text">
+          <h1>Studio CAI</h1>
+          <p class="brand-sub">Presenze studio</p>
+        </div>
+      </div>
+      <div class="status">
+        <span class="pill"><span class="dot" id="net-dot"></span><span id="net-text">Online</span></span>
+        <span class="pill pill--queue" id="queue-pill" hidden></span>
+      </div>
+    </header>
+
+    <!-- ===== Postazione ===== -->
+    <main id="panel-main" class="panel">
+
+      <!-- Fotocamera: sempre accesa, basta avvicinare il badge -->
+      <section class="card card--scan" id="scan-card" aria-label="Lettura badge">
+        <div class="scanner-wrap">
+          <video id="scanner-video" playsinline muted autoplay></video>
+          <canvas id="scanner-canvas" hidden></canvas>
+          <div class="scanner-frame" aria-hidden="true"><i></i><i></i><i></i><i></i><span class="scanline"></span></div>
+          <p class="scanner-status" id="scanner-status" aria-live="polite">Avvio fotocamera…</p>
+        </div>
+        <button type="button" class="button primary" id="btn-camera" hidden>Attiva fotocamera</button>
+      </section>
+
+      <!-- Badge letto: tipo proposto, registrazione automatica -->
+      <section class="card card--read" id="read-card" hidden aria-live="polite">
+        <div class="read-hero">
+          <div class="avatar" id="read-initials">—</div>
+          <h2 id="read-name">—</h2>
+          <p class="muted" id="read-time">—</p>
+        </div>
+        <div class="tipo-grid" role="radiogroup" aria-label="Tipo di timbratura">
+          <button type="button" class="tipo-btn tipo-btn--entrata" id="btn-entrata" role="radio" aria-checked="false">
+            ENTRATA<small id="hint-entrata"></small>
+          </button>
+          <button type="button" class="tipo-btn tipo-btn--uscita" id="btn-uscita" role="radio" aria-checked="false">
+            USCITA<small id="hint-uscita"></small>
+          </button>
+        </div>
+        <div class="countdown">
+          <svg class="ring" viewBox="0 0 40 40" aria-hidden="true">
+            <circle class="ring-bg" cx="20" cy="20" r="16"></circle>
+            <circle class="ring-fg" id="ring-fg" cx="20" cy="20" r="16"></circle>
+          </svg>
+          <span id="countdown-text">Registro tra 4 secondi</span>
+        </div>
+        <div class="actions actions--two">
+          <button type="button" class="button" id="btn-annulla">Annulla</button>
+          <button type="button" class="button primary" id="btn-conferma">Registra ora</button>
+        </div>
+        <p class="muted small center" id="read-reason"></p>
+      </section>
+
+      <!-- Esito -->
+      <section class="card card--done" id="done-card" hidden aria-live="assertive">
+        <div class="check" id="done-check" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+        </div>
+        <h2 id="done-title">—</h2>
+        <p class="done-sub" id="done-sub">—</p>
+        <p class="done-note" id="done-note"></p>
+      </section>
+
+      <section class="card card--who" aria-labelledby="who-title">
+        <h2 id="who-title">In studio adesso</h2>
+        <ul class="who-list" id="who-list"></ul>
+      </section>
+
+      <nav class="links" aria-label="Altre funzioni">
+        <button type="button" class="chip" data-panel="manual">Inserimento manuale</button>
+        <button type="button" class="chip" data-panel="today">Timbrature di oggi</button>
+        <button type="button" class="chip" data-panel="badges">Badge</button>
+      </nav>
+    </main>
+
+    <!-- ===== Inserimento manuale ===== -->
+    <section id="panel-manual" class="panel" hidden>
+      <div class="card">
+        <button type="button" class="back-btn" data-panel="main">← Torna alla postazione</button>
+        <h2>Inserimento manuale</h2>
+        <p class="muted">Solo se il badge non è disponibile o la timbratura è stata dimenticata. Il motivo è obbligatorio.</p>
+
+        <form id="manual-form" novalidate>
+          <div class="grid">
+            <div class="field field--span2">
+              <label for="m-employee">Collega <span class="req">*</span></label>
+              <select id="m-employee" required>
+                <option value="">Seleziona…</option>
+              </select>
+            </div>
+
+            <div class="field field--span2">
+              <label id="m-type-label">Tipo <span class="req">*</span></label>
+              <div class="seg" role="radiogroup" aria-labelledby="m-type-label">
+                <input type="radio" name="m-type" id="m-type-entrata" value="entrata" required>
+                <label class="seg-btn" for="m-type-entrata">Entrata</label>
+                <input type="radio" name="m-type" id="m-type-uscita" value="uscita">
+                <label class="seg-btn" for="m-type-uscita">Uscita</label>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="m-date">Data <span class="req">*</span></label>
+              <input type="date" id="m-date" required>
+              <div class="date-shortcuts">
+                <button type="button" class="chip" id="btn-today">Oggi</button>
+                <button type="button" class="chip" id="btn-yesterday">Ieri</button>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="m-time">Ora <span class="req">*</span></label>
+              <input type="time" id="m-time" required>
+              <div class="date-shortcuts">
+                <button type="button" class="chip" id="btn-now">Adesso</button>
+              </div>
+            </div>
+
+            <div class="field field--span2">
+              <label for="m-notes">Motivo <span class="req">*</span></label>
+              <textarea id="m-notes" rows="3" required placeholder="Es. badge dimenticato a casa, uscita per sopralluogo in condominio."></textarea>
+            </div>
+          </div>
+
+          <p class="summary" id="m-summary" hidden></p>
+
+          <div class="actions">
+            <button type="submit" class="button primary" id="btn-manual-submit">Invia timbratura<span class="spinner" aria-hidden="true"></span></button>
+            <button type="button" class="button" id="btn-manual-reset">Pulisci</button>
+          </div>
+          <p class="form-msg" id="manual-msg" aria-live="polite"></p>
+        </form>
+      </div>
+    </section>
+
+    <!-- ===== Timbrature di oggi ===== -->
+    <section id="panel-today" class="panel" hidden>
+      <div class="card card--history">
+        <button type="button" class="back-btn" data-panel="main">← Torna alla postazione</button>
+        <h2>Timbrature di oggi</h2>
+        <p class="muted small">Da questo dispositivo, a solo scopo di riscontro. Il registro ufficiale resta il foglio dello studio.</p>
+        <ul class="history-list" id="history-list"></ul>
+        <p class="muted small" id="history-empty">Nessuna timbratura oggi da questo dispositivo.</p>
+      </div>
+    </section>
+
+    <!-- ===== Badge ===== -->
+    <section id="panel-badges" class="panel" hidden>
+      <div class="card">
+        <button type="button" class="back-btn" data-panel="main">← Torna alla postazione</button>
+        <h2>Badge</h2>
+        <p class="muted">Stampa il badge o salvalo sul telefono: si timbra mostrandolo alla fotocamera della postazione.</p>
+        <div class="badge-grid" id="badge-grid"></div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>© <span id="year"></span> Studio CAI</span>
+      <span class="version-badge" id="version-badge">v2.0.0</span>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="./badges.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
