@@ -1,5 +1,5 @@
 /* Studio CAI — Presenze studio
-   v2.3.0 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
+   v2.1.0 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
    fondo crema, Fraunces per i titoli, Manrope per il testo, schede morbide.
 
    FONT
@@ -131,7 +131,6 @@ html.app-pronta .container{opacity:1;animation:none;transition:opacity 160ms eas
 .stato--in{color:var(--ok);background-color:var(--ok-tenue)}
 .stato--out{color:var(--muted)}
 .stato--none{color:#AFA396;border-style:dashed}
-.stato--meet{color:var(--warn);background-color:var(--warn-tenue);white-space:normal;text-align:right}
 
 /* --- Fotocamera --- */
 .card--scan{padding:18px;display:flex;flex-direction:column;gap:14px}
@@ -197,37 +196,6 @@ html.app-pronta .container{opacity:1;animation:none;transition:opacity 160ms eas
 .done-sub{margin:0;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
 .done-note{margin:0;font-size:14px;color:var(--muted);max-width:40ch}
 .done-note.warn{color:var(--warn);font-weight:600}
-
-/* --- Assemblea (v2.3.0) --- */
-.button.button--meet{
-  flex-direction:column;gap:2px;min-height:64px;width:100%;
-  border:1.5px solid var(--warn);color:var(--warn);background-color:var(--warn-tenue);
-  font-size:16px;letter-spacing:.03em;
-}
-.button.button--meet small{font-weight:600;font-size:12px;letter-spacing:0;opacity:.85}
-@media (hover:hover){.button.button--meet:hover{border-color:var(--warn);background-color:#FAEFD9}}
-.button.primary.button--meet-solid{background-color:var(--warn);border-color:var(--warn);box-shadow:0 6px 16px -8px rgba(181,118,31,.8)}
-@media (hover:hover){.button.primary.button--meet-solid:hover{background-color:#9A6418;border-color:#9A6418}}
-.card--meet{padding:22px 24px;border-color:#F0DDBB;background-color:var(--warn-tenue)}
-.card--meet h2{font-size:18px;margin:0 0 12px;color:var(--warn)}
-.meet-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
-.meet-item{
-  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
-  padding:12px 15px;border:1px solid #F0DDBB;border-radius:var(--r-campo);background-color:var(--card);
-}
-.meet-text{font-weight:700;line-height:1.4}
-.meet-text small{display:block;font-weight:600;color:var(--muted);font-size:12.5px}
-.meet-item .button{min-height:44px;padding:10px 16px}
-.meet-info{margin:0;padding:14px 16px;border-radius:var(--r-campo);background-color:var(--warn-tenue);border:1px solid #F0DDBB;font-weight:700;line-height:1.45}
-.a-block{display:flex;flex-direction:column;gap:18px;margin-top:20px}
-.a-block .actions{margin-top:0}
-.a-block .summary{margin:0}
-.summary.warn{border-left-color:var(--err);background-color:var(--err-tenue);border-color:#F2CFCF}
-.link-btn{
-  background:none;border:none;padding:0;margin:0;align-self:flex-start;text-align:left;
-  color:var(--muted);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;text-decoration:underline;
-}
-.link-btn.armed{color:var(--err)}
 
 /* --- Link secondari --- */
 .links{display:flex;gap:9px;justify-content:center;flex-wrap:wrap;padding:2px 0}
