@@ -1,5 +1,5 @@
 /* Studio CAI — Presenze studio
-   v2.1.0 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
+   v2.1.2 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
    fondo crema, Fraunces per i titoli, Manrope per il testo, schede morbide.
 
    FONT
@@ -196,6 +196,18 @@ html.app-pronta .container{opacity:1;animation:none;transition:opacity 160ms eas
 .done-sub{margin:0;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
 .done-note{margin:0;font-size:14px;color:var(--muted);max-width:40ch}
 .done-note.warn{color:var(--warn);font-weight:600}
+
+/* Riepilogo della giornata dopo l'Uscita (v2.1.2) */
+.riepilogo{
+  width:100%;max-width:340px;margin-top:10px;padding:14px 16px;
+  border:1px solid var(--border);border-radius:var(--r-campo);background-color:var(--campo);
+  text-align:left;
+}
+.riepilogo-tot{margin:0;font-size:15px;color:var(--text);text-align:center}
+.riepilogo-tot strong{font-family:var(--font-display);font-weight:600;font-size:20px;color:var(--primary);margin-left:4px}
+.riepilogo-turni{list-style:none;margin:10px 0 0;padding:10px 0 0;border-top:1px solid var(--border);display:grid;gap:6px}
+.riepilogo-turni li{display:flex;justify-content:space-between;gap:12px;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+.riepilogo-turni li span:last-child{color:var(--muted);font-weight:700}
 
 /* --- Link secondari --- */
 .links{display:flex;gap:9px;justify-content:center;flex-wrap:wrap;padding:2px 0}
