@@ -1,5 +1,5 @@
 /* Studio CAI — Presenze studio
-   v2.1.0 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
+   v2.2.0 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
    fondo crema, Fraunces per i titoli, Manrope per il testo, schede morbide.
 
    FONT
@@ -131,6 +131,7 @@ html.app-pronta .container{opacity:1;animation:none;transition:opacity 160ms eas
 .stato--in{color:var(--ok);background-color:var(--ok-tenue)}
 .stato--out{color:var(--muted)}
 .stato--none{color:#AFA396;border-style:dashed}
+.stato--meet{color:var(--warn);background-color:var(--warn-tenue);white-space:normal;text-align:right}
 
 /* --- Fotocamera --- */
 .card--scan{padding:18px;display:flex;flex-direction:column;gap:14px}
@@ -178,6 +179,9 @@ html.app-pronta .container{opacity:1;animation:none;transition:opacity 160ms eas
 .tipo-btn:active{transform:scale(.98)}
 .tipo-btn--entrata[aria-checked="true"]{background-color:var(--ok);border-color:var(--ok);color:#fff;box-shadow:0 8px 20px -10px rgba(63,107,84,.8)}
 .tipo-btn--uscita[aria-checked="true"]{background-color:var(--primary);border-color:var(--primary);color:#fff;box-shadow:0 8px 20px -10px rgba(139,21,56,.8)}
+.tipo-btn--assemblea{grid-column:span 2;min-height:64px}
+.tipo-btn--assemblea[aria-checked="true"]{background-color:var(--warn);border-color:var(--warn);color:#fff;box-shadow:0 8px 20px -10px rgba(181,118,31,.8)}
+.assemblea-box{display:flex;flex-direction:column;gap:8px}
 .countdown{display:flex;align-items:center;justify-content:center;gap:12px;font-weight:700;font-size:15px}
 .ring{width:38px;height:38px;flex:none}
 .ring circle{fill:none;stroke-width:4}
