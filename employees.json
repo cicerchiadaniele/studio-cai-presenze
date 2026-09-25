@@ -1,5 +1,5 @@
 [
-  { "id": "STF001", "nome": "Simone Pomponi" },
+  { "id": "STF001", "nome": "Simone Pomponi", "assemblee": false },
   { "id": "STF002", "nome": "Marco Reali" },
   { "id": "STF003", "nome": "Paolo Morabito" }
 ]
