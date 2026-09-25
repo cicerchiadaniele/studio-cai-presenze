@@ -1,4 +1,4 @@
-/* Studio CAI — Presenze studio v2.1.2
+/* Studio CAI — Presenze studio v2.1.3
    Postazione di timbratura con badge QR, allineata a Portieri 2.0.
 
    NOVITÀ 2.1.2 — Riepilogo all'uscita
@@ -7,6 +7,8 @@
    studio (i singoli tratti solo se sono più di uno). Dati: registro
    condiviso + timbrature di questo dispositivo.
    La schermata resta 8 secondi (un tocco la chiude).
+   2.1.3: grafica del riepilogo rifatta (saluto, totale grande, barra
+   della giornata con i tratti in studio).
 
    NOVITÀ 2.1.0 — "In studio adesso" condiviso
    Nella 2.0 il riquadro si basava solo sulle timbrature fatte dallo
@@ -39,7 +41,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.1.2";
+const APP_VERSION = "2.1.3";
 const LAST_UPDATE = "2026-09-25";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -63,6 +65,7 @@ const MAX_AUTO_ATTEMPTS = 3;
 const MANUAL_WINDOW_DAYS = 31;
 const POST_TIMEOUT_MS = 10000;
 const REMOTE_KEY = "cai_studio_stato_v1";
+const ORARIO = { da: 9 * 60, a: 18 * 60 };  // orario di lavoro dello studio (per la barra del riepilogo)
 const STATUS_EVERY_MS = 3 * 60 * 1000;  // aggiornamento mentre l'app è aperta
 const STATUS_AFTER_SEND_MS = 4000;      // rilettura dopo una timbratura
 
@@ -656,33 +659,69 @@ function fmtDurata(min){
   const h = Math.floor(min / 60), m = min % 60;
   return h ? `${h} h ${pad(m)} min` : `${m} min`;
 }
+function saluto(ora){
+  const h = +ora.slice(0, 2);
+  return h < 12 ? "A dopo" : h < 15 ? "Buon pranzo" : h < 18 ? "Buon pomeriggio" : "Buona serata";
+}
 function renderRiepilogo(empId){
   const box = $("#done-riepilogo");
+  const card = $("#done-card");
   if(!box) return;
-  if(!empId){ box.hidden = true; return; }
+  if(!empId){ box.hidden = true; card?.classList.remove("card--exit"); return; }
+  const emp = empById(empId);
   const g = giornataDi(empId);
+  const toMin = hm => { const [h, m] = hm.split(":").map(Number); return h * 60 + m; };
+  const el = (tag, cls, txt) => { const e = document.createElement(tag); if(cls) e.className = cls; if(txt != null) e.textContent = txt; return e; };
   const frag = document.createDocumentFragment();
-  const head = document.createElement("p");
-  head.className = "riepilogo-tot";
-  head.innerHTML = g.turni.length
-    ? `Oggi in studio <strong>${fmtDurata(g.totale)}</strong>`
-    : "Nessuna entrata registrata oggi";
-  frag.appendChild(head);
-  // Dettaglio dei tratti solo se nella giornata ce n'è più di uno
-  if(g.turni.length > 1){
-    const ul = document.createElement("ul");
-    ul.className = "riepilogo-turni";
+
+  const ultima = g.turni.length ? g.turni[g.turni.length - 1].a : toHM(new Date());
+  const nome = String(emp?.nome || "").split(/\s+/)[0];
+  frag.appendChild(el("p", "rp-saluto", `${saluto(ultima)}${nome ? ", " + nome : ""}!`));
+
+  if(!g.turni.length){
+    frag.appendChild(el("p", "rp-vuoto", "Nessuna entrata registrata oggi."));
+  } else {
+    frag.appendChild(el("p", "rp-label", "Oggi in studio"));
+    // Totale grande: ore e minuti con le unità più piccole
+    const tot = el("p", "rp-totale");
+    const h = Math.floor(g.totale / 60), m = g.totale % 60;
+    if(h){ tot.append(el("span", "rp-num", String(h)), el("span", "rp-unit", "h")); }
+    tot.append(el("span", "rp-num", h ? pad(m) : String(m)), el("span", "rp-unit", "min"));
+    frag.appendChild(tot);
+
+    // Barra della giornata sull'orario di lavoro 09:00–18:00 (si allarga
+    // se si entra prima o si esce dopo)
+    const primo = toMin(g.turni[0].da), ultimo = toMin(ultima);
+    const da = Math.min(ORARIO.da, Math.floor(primo / 60) * 60);
+    const a = Math.max(ORARIO.a, Math.ceil(ultimo / 60) * 60);
+    const bar = el("div", "rp-bar");
+    bar.setAttribute("aria-hidden", "true");
     g.turni.forEach(t => {
-      const li = document.createElement("li");
-      const a = document.createElement("span"); a.textContent = `${t.da} → ${t.a}`;
-      const b = document.createElement("span"); b.textContent = fmtDurata(t.min);
-      li.append(a, b);
-      ul.appendChild(li);
+      const s = el("span", "rp-seg");
+      s.style.left = `${((toMin(t.da) - da) / (a - da)) * 100}%`;
+      s.style.width = `${Math.max(1.5, ((toMin(t.a) - toMin(t.da)) / (a - da)) * 100)}%`;
+      bar.appendChild(s);
     });
-    frag.appendChild(ul);
+    const scala = el("div", "rp-scala");
+    scala.setAttribute("aria-hidden", "true");
+    const hm = x => `${pad(Math.floor(x / 60))}:${pad(x % 60)}`;
+    [da, a].forEach(x => scala.appendChild(el("span", null, hm(x))));
+    frag.append(bar, scala);
+
+    // Dettaglio dei tratti solo se nella giornata ce n'è più di uno
+    if(g.turni.length > 1){
+      const ul = el("ul", "rp-turni");
+      g.turni.forEach(t => {
+        const li = el("li");
+        li.append(el("span", "rp-orari", `${t.da} – ${t.a}`), el("span", "rp-durata", fmtDurata(t.min)));
+        ul.appendChild(li);
+      });
+      frag.appendChild(ul);
+    }
   }
   box.replaceChildren(frag);
   box.hidden = false;
+  card?.classList.add("card--exit");
 }
 
 function showDone({ tipo, nome, ora, status }){
