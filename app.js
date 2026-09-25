@@ -1,4 +1,4 @@
-/* Studio CAI — Presenze studio v2.1.3
+/* Studio CAI — Presenze studio v2.1.4
    Postazione di timbratura con badge QR, allineata a Portieri 2.0.
 
    NOVITÀ 2.1.2 — Riepilogo all'uscita
@@ -9,6 +9,7 @@
    La schermata resta 8 secondi (un tocco la chiude).
    2.1.3: grafica del riepilogo rifatta (saluto, totale grande, barra
    della giornata con i tratti in studio).
+   2.1.4: in testata il logo vero dello studio, come nelle altre webapp.
 
    NOVITÀ 2.1.0 — "In studio adesso" condiviso
    Nella 2.0 il riquadro si basava solo sulle timbrature fatte dallo
@@ -41,7 +42,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.1.3";
+const APP_VERSION = "2.1.4";
 const LAST_UPDATE = "2026-09-25";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
