@@ -1,4 +1,4 @@
-/* Studio CAI — Presenze studio v2.1.5
+/* Studio CAI — Presenze studio v2.1.6
    Postazione di timbratura con badge QR, allineata a Portieri 2.0.
 
    NOVITÀ 2.1.2 — Riepilogo all'uscita
@@ -12,6 +12,8 @@
    2.1.4: in testata il logo vero dello studio, come nelle altre webapp.
    2.1.5: dal tempo in studio si toglie in automatico la pausa pranzo
    13:00–14:00 (solo la parte in cui si risulta dentro).
+   2.1.6: niente scritta sulla pausa; nella barra l'ora di pranzo è uno
+   stacco con l'icona di forchetta e coltello.
 
    NOVITÀ 2.1.0 — "In studio adesso" condiviso
    Nella 2.0 il riquadro si basava solo sulle timbrature fatte dallo
@@ -44,7 +46,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.1.5";
+const APP_VERSION = "2.1.6";
 const LAST_UPDATE = "2026-09-28";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -707,23 +709,30 @@ function renderRiepilogo(empId){
     const a = Math.max(ORARIO.a, Math.ceil(ultimo / 60) * 60);
     const bar = el("div", "rp-bar");
     bar.setAttribute("aria-hidden", "true");
-    // Fascia della pausa pranzo, sotto i tratti in studio
+    const pct = x => `${((x - da) / (a - da)) * 100}%`;
+    // Ora di pranzo: uno stacco nella barra con forchetta e coltello
     const p = el("span", "rp-pausa");
-    p.style.left = `${((PAUSA.da - da) / (a - da)) * 100}%`;
+    p.style.left = pct(PAUSA.da);
     p.style.width = `${((PAUSA.a - PAUSA.da) / (a - da)) * 100}%`;
+    p.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8M4.5 3v5a2.5 2.5 0 0 0 5 0V3M7 11v10M17 21V3c-2.2 1.2-3.5 3.6-3.5 7v3.5H17"/></svg>';
     bar.appendChild(p);
+    // Tratti in studio, spezzati sulla pausa pranzo
     g.turni.forEach(t => {
-      const s = el("span", "rp-seg");
-      s.style.left = `${((toMin(t.da) - da) / (a - da)) * 100}%`;
-      s.style.width = `${Math.max(1.5, ((toMin(t.a) - toMin(t.da)) / (a - da)) * 100)}%`;
-      bar.appendChild(s);
+      const s0 = toMin(t.da), s1 = toMin(t.a);
+      const parti = (s1 <= PAUSA.da || s0 >= PAUSA.a) ? [[s0, s1]]
+        : [[s0, Math.min(s1, PAUSA.da)], [Math.max(s0, PAUSA.a), s1]].filter(([x, y]) => y > x);
+      parti.forEach(([x, y]) => {
+        const s = el("span", "rp-seg");
+        s.style.left = pct(x);
+        s.style.width = `${Math.max(1.5, ((y - x) / (a - da)) * 100)}%`;
+        bar.appendChild(s);
+      });
     });
     const scala = el("div", "rp-scala");
     scala.setAttribute("aria-hidden", "true");
     const hm = x => `${pad(Math.floor(x / 60))}:${pad(x % 60)}`;
     [da, a].forEach(x => scala.appendChild(el("span", null, hm(x))));
     frag.append(bar, scala);
-    if(g.pausa) frag.appendChild(el("p", "rp-nota", `Pausa pranzo esclusa (${fmtDurata(g.pausa)})`));
 
     // Dettaglio dei tratti solo se nella giornata ce n'è più di uno
     if(g.turni.length > 1){
