@@ -1,4 +1,4 @@
-/* Studio CAI — Presenze studio v2.1.4
+/* Studio CAI — Presenze studio v2.1.5
    Postazione di timbratura con badge QR, allineata a Portieri 2.0.
 
    NOVITÀ 2.1.2 — Riepilogo all'uscita
@@ -10,6 +10,8 @@
    2.1.3: grafica del riepilogo rifatta (saluto, totale grande, barra
    della giornata con i tratti in studio).
    2.1.4: in testata il logo vero dello studio, come nelle altre webapp.
+   2.1.5: dal tempo in studio si toglie in automatico la pausa pranzo
+   13:00–14:00 (solo la parte in cui si risulta dentro).
 
    NOVITÀ 2.1.0 — "In studio adesso" condiviso
    Nella 2.0 il riquadro si basava solo sulle timbrature fatte dallo
@@ -42,8 +44,8 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.1.4";
-const LAST_UPDATE = "2026-09-25";
+const APP_VERSION = "2.1.5";
+const LAST_UPDATE = "2026-09-28";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
   status_url: ""
@@ -67,6 +69,7 @@ const MANUAL_WINDOW_DAYS = 31;
 const POST_TIMEOUT_MS = 10000;
 const REMOTE_KEY = "cai_studio_stato_v1";
 const ORARIO = { da: 9 * 60, a: 18 * 60 };  // orario di lavoro dello studio (per la barra del riepilogo)
+const PAUSA = { da: 13 * 60, a: 14 * 60 };  // pausa pranzo, tolta in automatico dal tempo in studio
 const STATUS_EVERY_MS = 3 * 60 * 1000;  // aggiornamento mentre l'app è aperta
 const STATUS_AFTER_SEND_MS = 4000;      // rilettura dopo una timbratura
 
@@ -642,27 +645,34 @@ async function confirmRead(){
 /* ---------- Riepilogo della giornata (dopo l'Uscita) ----------
    Coppie entrata → uscita di oggi, in ordine di orario, e tempo totale.
    Un'uscita senza entrata prima non conta; un'entrata senza uscita
-   (non dovrebbe capitare, l'ultimo passaggio è l'uscita) resta aperta. */
+   (non dovrebbe capitare, l'ultimo passaggio è l'uscita) resta aperta.
+   Pausa pranzo: la parte di ogni tratto che cade tra 13:00 e 14:00 non
+   si conta (chi esce alle 13 e rientra alle 14 non perde nulla). */
 function giornataDi(empId){
   const toMin = hm => { const [h, m] = hm.split(":").map(Number); return h * 60 + m; };
   const turni = [];
-  let aperto = null;
+  let aperto = null, pausa = 0;
   todayEventsOf(empId).forEach(e => {
     if(e.tipo === "entrata"){ if(!aperto) aperto = e.ora; }
     else if(e.tipo === "uscita" && aperto){
-      turni.push({ da: aperto, a: e.ora, min: Math.max(0, toMin(e.ora) - toMin(aperto)) });
+      const da = toMin(aperto), a = toMin(e.ora);
+      const lordo = Math.max(0, a - da);
+      const inPausa = Math.max(0, Math.min(a, PAUSA.a) - Math.max(da, PAUSA.da));
+      pausa += inPausa;
+      turni.push({ da: aperto, a: e.ora, min: lordo - inPausa });
       aperto = null;
     }
   });
-  return { turni, totale: turni.reduce((s, t) => s + t.min, 0) };
+  return { turni, pausa, totale: turni.reduce((s, t) => s + t.min, 0) };
 }
 function fmtDurata(min){
   const h = Math.floor(min / 60), m = min % 60;
-  return h ? `${h} h ${pad(m)} min` : `${m} min`;
+  return h ? (m ? `${h} h ${pad(m)} min` : `${h} h`) : `${m} min`;
 }
 function saluto(ora){
   const h = +ora.slice(0, 2);
-  return h < 12 ? "A dopo" : h < 15 ? "Buon pranzo" : h < 18 ? "Buon pomeriggio" : "Buona serata";
+  // "Buon pranzo" fino alle 14, in linea con la pausa pranzo 13–14
+  return h < 12 ? "A dopo" : h < 14 ? "Buon pranzo" : h < 18 ? "Buon pomeriggio" : "Buona serata";
 }
 function renderRiepilogo(empId){
   const box = $("#done-riepilogo");
@@ -697,6 +707,11 @@ function renderRiepilogo(empId){
     const a = Math.max(ORARIO.a, Math.ceil(ultimo / 60) * 60);
     const bar = el("div", "rp-bar");
     bar.setAttribute("aria-hidden", "true");
+    // Fascia della pausa pranzo, sotto i tratti in studio
+    const p = el("span", "rp-pausa");
+    p.style.left = `${((PAUSA.da - da) / (a - da)) * 100}%`;
+    p.style.width = `${((PAUSA.a - PAUSA.da) / (a - da)) * 100}%`;
+    bar.appendChild(p);
     g.turni.forEach(t => {
       const s = el("span", "rp-seg");
       s.style.left = `${((toMin(t.da) - da) / (a - da)) * 100}%`;
@@ -708,6 +723,7 @@ function renderRiepilogo(empId){
     const hm = x => `${pad(Math.floor(x / 60))}:${pad(x % 60)}`;
     [da, a].forEach(x => scala.appendChild(el("span", null, hm(x))));
     frag.append(bar, scala);
+    if(g.pausa) frag.appendChild(el("p", "rp-nota", `Pausa pranzo esclusa (${fmtDurata(g.pausa)})`));
 
     // Dettaglio dei tratti solo se nella giornata ce n'è più di uno
     if(g.turni.length > 1){
