@@ -1,4 +1,4 @@
-/* Studio CAI — Presenze studio v2.1.6
+/* Studio CAI — Presenze studio v2.1.7
    Postazione di timbratura con badge QR, allineata a Portieri 2.0.
 
    NOVITÀ 2.1.2 — Riepilogo all'uscita
@@ -14,6 +14,9 @@
    13:00–14:00 (solo la parte in cui si risulta dentro).
    2.1.6: niente scritta sulla pausa; nella barra l'ora di pranzo è uno
    stacco con l'icona di forchetta e coltello.
+   2.1.7: "In studio adesso" mostra anche ferie, permessi, malattia ecc.
+   inseriti con l'app Portieri (letti dal registro). Il permesso a ore
+   vale quando non si è timbrato l'ingresso o si è già usciti.
 
    NOVITÀ 2.1.0 — "In studio adesso" condiviso
    Nella 2.0 il riquadro si basava solo sulle timbrature fatte dallo
@@ -46,7 +49,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.1.6";
+const APP_VERSION = "2.1.7";
 const LAST_UPDATE = "2026-09-28";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -91,7 +94,7 @@ const state = {
   doneTimer: null,
   wakeLock: null,
   flushing: false,
-  remote: null,            // { date: "YYYY-MM-DD", events: [{id,tipo,ora}], at: ms }
+  remote: null,            // { date: "YYYY-MM-DD", events: [{id,tipo,ora}], assenze: [{id,tipo,intera,ore}], at: ms }
   statusLoading: false
 };
 
@@ -190,6 +193,30 @@ function presenceOf(empId){
   if(!last) return { stato: "none", ora: "" };
   return { stato: last.tipo === "entrata" ? "in" : "out", ora: last.ora };
 }
+/* Assenza di oggi dall'app Portieri: prima quelle di giornata intera */
+function assenzaOf(empId){
+  if(!state.remote || state.remote.date !== todayISO()) return null;
+  const a = (state.remote.assenze || []).filter(x => x.id === empId);
+  return a.find(x => x.intera) || a[0] || null;
+}
+function assenzaLabel(tipo){
+  const t = String(tipo).toLowerCase();
+  if(t === "ferie") return "In ferie";
+  if(t === "malattia") return "In malattia";
+  if(t.startsWith("permesso")) return "In permesso";
+  if(t === "recupero") return "In recupero";
+  if(t === "formazione") return "In formazione";
+  return "Assente";
+}
+/* Stato da mostrare: le timbrature vincono; senza ingresso (o dopo l'uscita)
+   vale l'assenza di oggi, anche il permesso a ore (v2.1.7) */
+function statoWho(empId){
+  const p = presenceOf(empId);
+  if(p.stato === "in") return { cls: "in", testo: "In studio" };
+  const a = assenzaOf(empId);
+  if(a) return { cls: "assente", testo: assenzaLabel(a.tipo) };
+  return p.stato === "out" ? { cls: "out", testo: "Uscito" } : { cls: "none", testo: "Non ancora arrivato" };
+}
 function suggestTipo(empId){
   return presenceOf(empId).stato === "in" ? "uscita" : "entrata";
 }
@@ -204,7 +231,8 @@ function loadRemoteCache(){
   if(r && r.date === todayISO() && Array.isArray(r.events)) state.remote = r;
 }
 
-/* L'Apps Script restituisce { date: "dd/MM/yyyy", events: [{id, tipo, ora}] } */
+/* L'Apps Script restituisce { date: "dd/MM/yyyy", events: [{id, tipo, ora}],
+   assenze: [{id, tipo, intera, ore}] } */
 async function fetchStatus(){
   const url = state.config.status_url;
   if(!url || state.statusLoading || !navigator.onLine) return;
@@ -221,8 +249,11 @@ async function fetchStatus(){
     const events = (Array.isArray(data.events) ? data.events : [])
       .map(e => ({ id: String(e.id || ""), tipo: String(e.tipo || "").toLowerCase(), ora: String(e.ora || "").slice(0, 5) }))
       .filter(e => known.has(e.id) && (e.tipo === "entrata" || e.tipo === "uscita") && /^\d{2}:\d{2}$/.test(e.ora));
+    const assenze = (Array.isArray(data.assenze) ? data.assenze : [])
+      .map(a => ({ id: String(a.id || ""), tipo: String(a.tipo || ""), intera: a.intera !== false, ore: Number(a.ore) || 0 }))
+      .filter(a => known.has(a.id) && a.tipo);
     if(iso === todayISO()){
-      state.remote = { date: iso, events, at: Date.now() };
+      state.remote = { date: iso, events, assenze, at: Date.now() };
       writeStore(REMOTE_KEY, state.remote);
     }
   } catch(e) {
@@ -252,17 +283,16 @@ function renderWho(){
   if(!list) return;
   const frag = document.createDocumentFragment();
   state.employees.forEach(emp => {
-    const p = presenceOf(emp.id);
+    const s = statoWho(emp.id);
     const li = document.createElement("li");
     li.className = "who-item";
     const name = document.createElement("span");
     name.className = "who-name";
     name.textContent = emp.nome;
     const st = document.createElement("span");
-    st.className = `stato stato--${p.stato}`;
-    // Solo lo stato, senza orari (v2.1.1)
-    st.textContent = p.stato === "in" ? "In studio"
-      : p.stato === "out" ? "Uscito" : "Non ancora arrivato";
+    st.className = `stato stato--${s.cls}`;
+    // Solo lo stato, senza orari (v2.1.1); ferie e permessi dal registro (v2.1.7)
+    st.textContent = s.testo;
     li.append(name, st);
     frag.appendChild(li);
   });
