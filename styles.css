@@ -1,5 +1,5 @@
 /* Studio CAI — Presenze studio
-   v2.1.7 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
+   v2.1.8 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
    fondo crema, Fraunces per i titoli, Manrope per il testo, schede morbide.
 
    FONT
@@ -129,9 +129,12 @@ html.app-pronta .container{opacity:1;animation:none;transition:opacity 160ms eas
 }
 .who-name{font-weight:700}
 .stato{
-  font-size:12px;font-weight:800;border-radius:999px;padding:5px 11px;
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:12px;font-weight:800;border-radius:999px;padding:5px 11px 5px 8px;
   border:1px solid currentColor;white-space:nowrap;font-variant-numeric:tabular-nums;
 }
+/* Iconcina dello stato (v2.1.8) */
+.stato svg{width:14px;height:14px;flex:none;display:block}
 .stato--in{color:var(--ok);background-color:var(--ok-tenue)}
 .stato--out{color:var(--muted)}
 .stato--none{color:#AFA396;border-style:dashed}
