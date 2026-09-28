@@ -1,5 +1,5 @@
 /* Studio CAI — Presenze studio
-   v2.1.6 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
+   v2.1.7 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
    fondo crema, Fraunces per i titoli, Manrope per il testo, schede morbide.
 
    FONT
@@ -135,6 +135,8 @@ html.app-pronta .container{opacity:1;animation:none;transition:opacity 160ms eas
 .stato--in{color:var(--ok);background-color:var(--ok-tenue)}
 .stato--out{color:var(--muted)}
 .stato--none{color:#AFA396;border-style:dashed}
+/* Ferie, permesso, malattia… dall'app Portieri (v2.1.7) */
+.stato--assente{color:var(--warn);background-color:var(--warn-tenue)}
 
 /* --- Fotocamera --- */
 .card--scan{padding:18px;display:flex;flex-direction:column;gap:14px}
