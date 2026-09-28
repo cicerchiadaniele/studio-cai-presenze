@@ -1,4 +1,4 @@
-/* Studio CAI — Presenze studio v2.1.7
+/* Studio CAI — Presenze studio v2.1.8
    Postazione di timbratura con badge QR, allineata a Portieri 2.0.
 
    NOVITÀ 2.1.2 — Riepilogo all'uscita
@@ -17,6 +17,8 @@
    2.1.7: "In studio adesso" mostra anche ferie, permessi, malattia ecc.
    inseriti con l'app Portieri (letti dal registro). Il permesso a ore
    vale quando non si è timbrato l'ingresso o si è già usciti.
+   2.1.8: il permesso a ore non si mostra più (solo assenze di giornata
+   intera); ogni stato ha la sua iconcina.
 
    NOVITÀ 2.1.0 — "In studio adesso" condiviso
    Nella 2.0 il riquadro si basava solo sulle timbrature fatte dallo
@@ -49,7 +51,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.1.7";
+const APP_VERSION = "2.1.8";
 const LAST_UPDATE = "2026-09-28";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -193,29 +195,44 @@ function presenceOf(empId){
   if(!last) return { stato: "none", ora: "" };
   return { stato: last.tipo === "entrata" ? "in" : "out", ora: last.ora };
 }
-/* Assenza di oggi dall'app Portieri: prima quelle di giornata intera */
+/* Assenza di oggi dall'app Portieri: solo quelle di giornata intera.
+   Il permesso a ore non si mostra (v2.1.8): senza l'orario non si sa
+   quando cade. */
 function assenzaOf(empId){
   if(!state.remote || state.remote.date !== todayISO()) return null;
-  const a = (state.remote.assenze || []).filter(x => x.id === empId);
-  return a.find(x => x.intera) || a[0] || null;
+  return (state.remote.assenze || []).find(x => x.id === empId && x.intera) || null;
 }
-function assenzaLabel(tipo){
+function assenzaInfo(tipo){
   const t = String(tipo).toLowerCase();
-  if(t === "ferie") return "In ferie";
-  if(t === "malattia") return "In malattia";
-  if(t.startsWith("permesso")) return "In permesso";
-  if(t === "recupero") return "In recupero";
-  if(t === "formazione") return "In formazione";
-  return "Assente";
+  if(t === "ferie") return { testo: "In ferie", icona: "ferie" };
+  if(t === "malattia") return { testo: "In malattia", icona: "malattia" };
+  if(t.startsWith("permesso")) return { testo: "In permesso", icona: "permesso" };
+  if(t === "recupero") return { testo: "In recupero", icona: "recupero" };
+  if(t === "formazione") return { testo: "In formazione", icona: "formazione" };
+  return { testo: "Assente", icona: "assente" };
 }
-/* Stato da mostrare: le timbrature vincono; senza ingresso (o dopo l'uscita)
-   vale l'assenza di oggi, anche il permesso a ore (v2.1.7) */
+/* Iconcine degli stati (v2.1.8), tratto nel colore dell'etichetta */
+const ICONE = {
+  in: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.8"/>',
+  out: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M9 16l-4-4 4-4"/><path d="M5 12h10"/>',
+  none: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/>',
+  ferie: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M2.5 12h2M19.5 12h2M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
+  malattia: '<path d="M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0z"/><path d="M12 11v6"/>',
+  permesso: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M8 3v4M16 3v4M3.5 10h17"/>',
+  recupero: '<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.5v5h5"/>',
+  formazione: '<path d="M2.5 5.5h6a3.5 3.5 0 0 1 3.5 3.5v11a2.5 2.5 0 0 0-2.5-2.5h-7z"/><path d="M21.5 5.5h-6A3.5 3.5 0 0 0 12 9v11a2.5 2.5 0 0 1 2.5-2.5h7z"/>',
+  assente: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>'
+};
+/* Stato da mostrare: le timbrature vincono; senza ingresso (o dopo
+   l'uscita) vale l'assenza di giornata intera di oggi */
 function statoWho(empId){
   const p = presenceOf(empId);
-  if(p.stato === "in") return { cls: "in", testo: "In studio" };
+  if(p.stato === "in") return { cls: "in", testo: "In studio", icona: "in" };
   const a = assenzaOf(empId);
-  if(a) return { cls: "assente", testo: assenzaLabel(a.tipo) };
-  return p.stato === "out" ? { cls: "out", testo: "Uscito" } : { cls: "none", testo: "Non ancora arrivato" };
+  if(a) return { cls: "assente", ...assenzaInfo(a.tipo) };
+  return p.stato === "out"
+    ? { cls: "out", testo: "Uscito", icona: "out" }
+    : { cls: "none", testo: "Non ancora arrivato", icona: "none" };
 }
 function suggestTipo(empId){
   return presenceOf(empId).stato === "in" ? "uscita" : "entrata";
@@ -291,8 +308,10 @@ function renderWho(){
     name.textContent = emp.nome;
     const st = document.createElement("span");
     st.className = `stato stato--${s.cls}`;
-    // Solo lo stato, senza orari (v2.1.1); ferie e permessi dal registro (v2.1.7)
-    st.textContent = s.testo;
+    // Solo lo stato, senza orari (v2.1.1); ferie e permessi dal registro
+    // (v2.1.7); con l'iconcina davanti (v2.1.8)
+    st.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONE[s.icona]}</svg>`;
+    st.appendChild(document.createTextNode(s.testo));
     li.append(name, st);
     frag.appendChild(li);
   });
