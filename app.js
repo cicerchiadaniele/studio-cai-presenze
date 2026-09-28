@@ -1,5 +1,6 @@
-/* Studio CAI — Presenze studio v2.1.9
-   Postazione di timbratura con badge QR, allineata a Portieri 2.0.
+/* Studio CAI — Presenze studio v2.1.10
+   Web app di timbratura con badge QR, installata da ogni dipendente sul
+   proprio telefono. Allineata a Portieri 2.0.
 
    NOVITÀ 2.1.2 — Riepilogo all'uscita
    Dopo l'Uscita la schermata di esito mostra il riepilogo della giornata
@@ -20,6 +21,8 @@
    2.1.8: il permesso a ore non si mostra più (solo assenze di giornata
    intera); ogni stato ha la sua iconcina.
    2.1.9: sul telefono nome e stato restano sulla stessa riga.
+   2.1.10: testi corretti, non si parla più di "postazione": ognuno
+   timbra dal proprio telefono inquadrando il QR sulla sua scrivania.
 
    NOVITÀ 2.1.0 — "In studio adesso" condiviso
    Nella 2.0 il riquadro si basava solo sulle timbrature fatte dallo
@@ -42,7 +45,7 @@
    - Codice univoco (request_id) per ogni timbratura.
    - Stesso badge letto di nuovo entro 2 minuti: ignorato.
    - Inserimento manuale con motivo obbligatorio.
-   - Schermo sempre acceso sulla postazione (Wake Lock, dove supportato).
+   - Schermo acceso mentre l'app è aperta (Wake Lock, dove supportato).
 
    COMPATIBILITÀ CON LO SCENARIO MAKE
    Il payload conserva tutti i campi della 1.1.0 (source, version,
@@ -52,7 +55,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.1.9";
+const APP_VERSION = "2.1.10";
 const LAST_UPDATE = "2026-09-28";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -500,7 +503,7 @@ function stopCamera(){
 
 function setScanIdle(){
   const s = $("#scanner-status");
-  if(s) s.textContent = "Avvicina il badge alla fotocamera";
+  if(s) s.textContent = "Inquadra il QR sulla tua scrivania";
   $(".scanner-wrap")?.classList.remove("paused");
 }
 
@@ -842,7 +845,7 @@ function switchPanel(name){
   } else {
     stopCountdown();
     state.read = null;
-    stopCamera();              // la fotocamera si spegne fuori dalla postazione
+    stopCamera();              // la fotocamera si spegne fuori dalla schermata principale
     if(name === "today") renderHistory();
     if(name === "manual") prepareManual();
   }
