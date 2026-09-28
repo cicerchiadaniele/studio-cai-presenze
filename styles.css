@@ -1,5 +1,5 @@
 /* Studio CAI — Presenze studio
-   v2.1.4 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
+   v2.1.5 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
    fondo crema, Fraunces per i titoli, Manrope per il testo, schede morbide.
 
    FONT
@@ -221,6 +221,9 @@ html.app-pronta .container{opacity:1;animation:none;transition:opacity 160ms eas
 .rp-unit:last-child{margin-right:0}
 .rp-bar{position:relative;height:12px;border-radius:999px;background-color:rgba(139,21,56,.10);overflow:hidden}
 .rp-seg{position:absolute;top:0;bottom:0;border-radius:999px;background-image:linear-gradient(90deg,#A3294F,var(--primary))}
+/* Pausa pranzo 13–14 (v2.1.5): a righe, sopra ai tratti così si vede che non conta */
+.rp-pausa{position:absolute;top:0;bottom:0;z-index:1;background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.85) 0 3px,rgba(255,255,255,.35) 3px 6px)}
+.rp-nota{margin:8px 0 0;font-size:12px;font-weight:600;color:var(--muted)}
 .rp-scala{display:flex;justify-content:space-between;margin-top:6px;font-size:11px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
 .rp-turni{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:6px}
 .rp-turni li{
