@@ -1,7 +1,7 @@
 {
   "name": "Presenze Studio — Studio CAI",
   "short_name": "Presenze Studio",
-  "description": "Postazione di timbratura con badge dello Studio CAI.",
+  "description": "Timbratura con badge QR dello Studio CAI, dal proprio telefono.",
   "lang": "it",
   "dir": "ltr",
   "start_url": "./",
