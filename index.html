@@ -28,7 +28,7 @@
       </div>
     </header>
 
-    <!-- ===== Postazione ===== -->
+    <!-- ===== Schermata principale ===== -->
     <main id="panel-main" class="panel">
 
       <!-- Fotocamera: sempre accesa, basta avvicinare il badge -->
@@ -100,7 +100,7 @@
     <!-- ===== Inserimento manuale ===== -->
     <section id="panel-manual" class="panel" hidden>
       <div class="card">
-        <button type="button" class="back-btn" data-panel="main">← Torna alla postazione</button>
+        <button type="button" class="back-btn" data-panel="main">← Torna indietro</button>
         <h2>Inserimento manuale</h2>
         <p class="muted">Solo se il badge non è disponibile o la timbratura è stata dimenticata. Il motivo è obbligatorio.</p>
 
@@ -160,7 +160,7 @@
     <!-- ===== Timbrature di oggi ===== -->
     <section id="panel-today" class="panel" hidden>
       <div class="card card--history">
-        <button type="button" class="back-btn" data-panel="main">← Torna alla postazione</button>
+        <button type="button" class="back-btn" data-panel="main">← Torna indietro</button>
         <h2>Timbrature di oggi</h2>
         <p class="muted small">Da questo dispositivo, a solo scopo di riscontro. Il registro ufficiale resta il foglio dello studio.</p>
         <ul class="history-list" id="history-list"></ul>
@@ -171,16 +171,16 @@
     <!-- ===== Badge ===== -->
     <section id="panel-badges" class="panel" hidden>
       <div class="card">
-        <button type="button" class="back-btn" data-panel="main">← Torna alla postazione</button>
+        <button type="button" class="back-btn" data-panel="main">← Torna indietro</button>
         <h2>Badge</h2>
-        <p class="muted">Stampa il badge o salvalo sul telefono: si timbra mostrandolo alla fotocamera della postazione.</p>
+        <p class="muted">Stampa il tuo badge e tienilo sulla scrivania: si timbra inquadrando il QR con la fotocamera del telefono.</p>
         <div class="badge-grid" id="badge-grid"></div>
       </div>
     </section>
 
     <footer class="footer">
       <span>© <span id="year"></span> Studio CAI</span>
-      <span class="version-badge" id="version-badge">v2.1.9</span>
+      <span class="version-badge" id="version-badge">v2.1.10</span>
     </footer>
   </div>
 
