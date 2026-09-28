@@ -1,5 +1,5 @@
 /* Studio CAI — Presenze studio
-   v2.1.8 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
+   v2.1.9 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
    fondo crema, Fraunces per i titoli, Manrope per il testo, schede morbide.
 
    FONT
@@ -392,6 +392,17 @@ input[type="date"],input[type="time"]{cursor:pointer}
   input,select,textarea{font-size:16px}
   .history-item{flex-direction:column;align-items:flex-start;gap:8px}
   .toast{right:12px;left:12px;bottom:12px;max-width:none}
+}
+/* Telefono: nome e stato sulla stessa riga (v2.1.9); su schermi
+   strettissimi il nome si accorcia con … invece di andare a capo */
+@media (max-width:420px){
+  .card--who{padding:20px 12px}
+  .who-item{padding:11px 10px 11px 12px;gap:6px;font-size:14px}
+  .who-item{min-width:0}
+  .who-name{flex:1 1 auto;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .stato{flex:none}
+  .stato{font-size:11.5px;gap:5px;padding:4px 9px 4px 7px}
+  .stato svg{width:13px;height:13px}
 }
 
 @media (prefers-reduced-motion: reduce){
