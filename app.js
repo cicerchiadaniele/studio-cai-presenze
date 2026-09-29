@@ -1,4 +1,4 @@
-/* Studio CAI — Presenze studio v2.1.10
+/* Studio CAI — Presenze studio v2.1.11
    Web app di timbratura con badge QR, installata da ogni dipendente sul
    proprio telefono. Allineata a Portieri 2.0.
 
@@ -23,6 +23,7 @@
    2.1.9: sul telefono nome e stato restano sulla stessa riga.
    2.1.10: testi corretti, non si parla più di "postazione": ognuno
    timbra dal proprio telefono inquadrando il QR sulla sua scrivania.
+   2.1.11: nell'inserimento manuale le note sono facoltative.
 
    NOVITÀ 2.1.0 — "In studio adesso" condiviso
    Nella 2.0 il riquadro si basava solo sulle timbrature fatte dallo
@@ -44,7 +45,7 @@
      al ritorno della connessione (3 tentativi automatici, poi "Riprova").
    - Codice univoco (request_id) per ogni timbratura.
    - Stesso badge letto di nuovo entro 2 minuti: ignorato.
-   - Inserimento manuale con motivo obbligatorio.
+   - Inserimento manuale, con note facoltative (v2.1.11).
    - Schermo acceso mentre l'app è aperta (Wake Lock, dove supportato).
 
    COMPATIBILITÀ CON LO SCENARIO MAKE
@@ -55,8 +56,8 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.1.10";
-const LAST_UPDATE = "2026-09-28";
+const APP_VERSION = "2.1.11";
+const LAST_UPDATE = "2026-09-29";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
   status_url: ""
@@ -975,7 +976,6 @@ function validateManual(v){
     const [h, m] = v.ora.split(":").map(Number);
     if(h * 60 + m > now.getHours() * 60 + now.getMinutes() + 5) return ["#m-time", "L'ora non può essere futura."];
   }
-  if(v.note.length < 3) return ["#m-notes", "Il motivo è obbligatorio."];
   return null;
 }
 
