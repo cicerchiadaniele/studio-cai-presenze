@@ -1,4 +1,4 @@
-/* Studio CAI — Presenze studio v2.1.11
+/* Studio CAI — Presenze studio v2.1.12
    Web app di timbratura con badge QR, installata da ogni dipendente sul
    proprio telefono. Allineata a Portieri 2.0.
 
@@ -24,6 +24,7 @@
    2.1.10: testi corretti, non si parla più di "postazione": ognuno
    timbra dal proprio telefono inquadrando il QR sulla sua scrivania.
    2.1.11: nell'inserimento manuale le note sono facoltative.
+   2.1.12: nell'inserimento manuale "Nome" al posto di "Collega".
 
    NOVITÀ 2.1.0 — "In studio adesso" condiviso
    Nella 2.0 il riquadro si basava solo sulle timbrature fatte dallo
@@ -56,7 +57,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.1.11";
+const APP_VERSION = "2.1.12";
 const LAST_UPDATE = "2026-09-29";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -963,7 +964,7 @@ function onManualLive(){
 }
 
 function validateManual(v){
-  if(!v.empId) return ["#m-employee", "Seleziona il collega."];
+  if(!v.empId) return ["#m-employee", "Scegli il tuo nome."];
   if(!v.tipo) return [".seg", "Scegli Entrata o Uscita."];
   if(!v.data) return ["#m-date", "Indica la data."];
   if(!v.ora) return ["#m-time", "Indica l'ora."];
