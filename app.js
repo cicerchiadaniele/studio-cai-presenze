@@ -2,6 +2,10 @@
    Web app di timbratura con badge QR, installata da ogni dipendente sul
    proprio telefono. Allineata a Portieri 2.0.
 
+   2.7.1 — 30/09/2026: la giornata in corso torna sulla scala comune dei
+   giorni mostrati (si vede quanto manca, come nella 2.6); la barra piena
+   da un capo all'altro vale solo per le giornate concluse.
+
    2.7.0 — 30/09/2026 — "Le tue presenze"
    - Anche l'entrata non timbrata è segnalata (etichetta rossa, con
      l'orario dell'uscita), come già l'uscita non timbrata; le ore del
@@ -121,7 +125,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.7.0";
+const APP_VERSION = "2.7.1";
 const LAST_UPDATE = "2026-09-30";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -1279,7 +1283,15 @@ function renderWeek(){
     if(giorni.length) gruppi.push({ l, giorni });
   });
 
-  // v2.7.0: ogni barra sulla scala del suo giorno, sempre piena agli estremi
+  // Giornate concluse: barra sulla scala del giorno, piena agli estremi (v2.7.0).
+  // Giornata in corso: scala comune dei giorni mostrati, così si vede
+  // l'avanzamento rispetto alle altre (v2.7.1).
+  let lo = Infinity, hi = -Infinity;
+  gruppi.forEach(gr => gr.giorni.forEach(x => {
+    x.g.turni.forEach(t => { lo = Math.min(lo, hmToMin(t.da)); hi = Math.max(hi, hmToMin(t.a)); });
+    if(x.live){ lo = Math.min(lo, hmToMin(x.live.da)); hi = Math.max(hi, hmToMin(x.live.a)); }
+  }));
+  const scala = isFinite(lo) && hi > lo ? [lo, hi] : null;
 
   const el = (tag, cls, txt) => { const e = document.createElement(tag); if(cls) e.className = cls; if(txt != null) e.textContent = txt; return e; };
   const giornoEl = x => {
@@ -1304,7 +1316,7 @@ function renderWeek(){
     if(voci.length) li.appendChild(el("div", "day-orari", voci.map(v => v.testo).join(" · ")));
 
     if(x.g.turni.length || x.live){
-      li.appendChild(barraGiornata(x.g.turni, { live: x.live }));
+      li.appendChild(barraGiornata(x.g.turni, x.live && scala ? { scala, live: x.live } : { live: x.live }));
     }
 
     const tag = [];
