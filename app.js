@@ -2,6 +2,10 @@
    Web app di timbratura con badge QR, installata da ogni dipendente sul
    proprio telefono. Allineata a Portieri 2.0.
 
+   2.4.2 — 30/09/2026: l'app si aggiorna da sola quando esce una versione
+   nuova (su iPhone l'app installata resta in memoria e continuava a usare
+   quella vecchia); se il registro non risponde si vede il motivo
+   (tempo scaduto, rete, risposta non valida).
    2.4.1 — 30/09/2026: la prima lettura del registro della giornata può
    richiedere 10-15 secondi (avvio dello script Google): l'attesa passa da
    12 a 40 secondi con un secondo tentativo, intanto si vedono gli ultimi
@@ -86,7 +90,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.4.1";
+const APP_VERSION = "2.4.2";
 const LAST_UPDATE = "2026-09-30";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -1024,8 +1028,13 @@ async function fetchWeek(){
     state.week = { id, giorni, at: Date.now(), ok: true };
     writeStore(WEEK_KEY, state.week);
   } catch(e) {
-    if(state.week && state.week.id === id) state.week.errore = true;
-    else state.week = { id, giorni: {}, at: 0, ok: false, errore: true };
+    const motivo = e && e.name === "AbortError" ? "tempo scaduto"
+      : e && e.name === "SyntaxError" ? "risposta non valida"
+      : e && e.message === "script" ? "script da aggiornare"
+      : e && /^HTTP/.test(e.message || "") ? e.message
+      : "errore di rete";
+    if(state.week && state.week.id === id){ state.week.errore = true; state.week.motivo = motivo; }
+    else state.week = { id, giorni: {}, at: 0, ok: false, errore: true, motivo };
   } finally {
     state.weekLoading = false;
     renderWeek();
@@ -1074,7 +1083,8 @@ function renderWeekStato(){
   if(!navigator.onLine){ el.textContent = hm ? `Offline · dati delle ${hm}` : "Offline"; return; }
   if(state.week && state.week.errore){
     el.classList.add("week-stato--warn");
-    el.textContent = hm ? `Aggiornamento non riuscito · dati delle ${hm} ` : "Registro non raggiungibile ";
+    const m = state.week.motivo ? ` (${state.week.motivo})` : "";
+    el.textContent = hm ? `Aggiornamento non riuscito${m} · dati delle ${hm} ` : `Registro non raggiungibile${m} `;
     const b = document.createElement("button");
     b.type = "button"; b.className = "link-inline"; b.textContent = "Riprova";
     b.addEventListener("click", fetchWeek);
@@ -1361,6 +1371,26 @@ function renderBadges(){
   grid.replaceChildren(frag);
 }
 
+/* ---------- Aggiornamento automatico (v2.4.2) ----------
+   Su iPhone l'app installata resta in memoria e non ricarica i file:
+   al ritorno in primo piano (al massimo una volta ogni 10 minuti) si
+   legge la versione pubblicata e, se è diversa, si ricarica la pagina.
+   Mai durante la scelta Entrata/Uscita o la schermata di esito. */
+let ultimoControlloVersione = 0;
+async function controllaVersione(){
+  if(!navigator.onLine || Date.now() - ultimoControlloVersione < 10 * 60 * 1000) return;
+  ultimoControlloVersione = Date.now();
+  try {
+    const res = await fetch(`./app.js?v=${Date.now()}`, { cache: "no-store" });
+    if(!res.ok) return;
+    const testo = await res.text();
+    const m = testo.match(/const APP_VERSION = "([^"]+)"/);
+    if(m && m[1] !== APP_VERSION && state.mode === "scan" && !loadQueue().some(i => state.inFlight.has(i.payload.request_id))){
+      location.reload();
+    }
+  } catch(e) {}
+}
+
 /* ---------- Schermo acceso e visibilità ---------- */
 async function requestWakeLock(){
   try {
@@ -1383,6 +1413,7 @@ function onVisibility(){
     stopCamera();           // niente fotocamera accesa in background
   } else {
     requestWakeLock();
+    controllaVersione();
     renderWho();            // a cambio giorno l'elenco si azzera
     fetchStatus();
     flushQueue();
