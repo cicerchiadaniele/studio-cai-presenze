@@ -82,7 +82,7 @@
 
       <nav class="links" aria-label="Altre funzioni">
         <button type="button" class="chip" data-panel="manual">Inserimento manuale</button>
-        <button type="button" class="chip" data-panel="week">Riepilogo settimanale</button>
+        <button type="button" class="chip" data-panel="week">Le tue presenze</button>
         <button type="button" class="chip" data-panel="badges">Badge</button>
       </nav>
     </main>
@@ -147,7 +147,7 @@
       </div>
     </section>
 
-    <!-- ===== Riepilogo settimanale (v2.4.0) ===== -->
+    <!-- ===== Le tue presenze (v2.5.0) ===== -->
     <section id="panel-week" class="panel" hidden>
       <div class="card card--week">
         <button type="button" class="back-btn" data-panel="main">← Torna indietro</button>
@@ -159,19 +159,20 @@
         </div>
 
         <div class="week-head">
-          <h2>La tua settimana</h2>
+          <h2>Le tue presenze</h2>
         </div>
 
-        <p class="week-empty" id="week-empty" hidden>Timbra una volta con il tuo badge: da quel momento qui trovi la tua settimana, anche fuori dallo studio.</p>
+        <p class="week-empty" id="week-empty" hidden>Timbra una volta con il tuo badge: da quel momento qui trovi le tue presenze, anche fuori dallo studio.</p>
 
         <div id="week-body" hidden>
           <p class="week-nome" id="week-nome"></p>
           <div class="week-nav">
-            <button type="button" id="week-prev" aria-label="Settimana precedente">‹</button>
+            <button type="button" id="week-prev" aria-label="Mese precedente">‹</button>
             <span id="week-label"></span>
-            <button type="button" id="week-next" aria-label="Settimana successiva">›</button>
+            <button type="button" id="week-next" aria-label="Mese successivo">›</button>
           </div>
-          <ul class="days" id="week-days"></ul>
+          <div class="week-chips" id="week-chips" role="group" aria-label="Settimana"></div>
+          <div id="week-days"></div>
           <p class="muted small week-note">Durate al netto della pausa pranzo 13–14.</p>
           <p class="muted small week-stato" id="week-stato" aria-live="polite"></p>
         </div>
@@ -190,7 +191,7 @@
 
     <footer class="footer">
       <span>© <span id="year"></span> Studio CAI</span>
-      <span class="version-badge" id="version-badge">v2.4.2</span>
+      <span class="version-badge" id="version-badge">v2.5.0</span>
     </footer>
   </div>
 

@@ -2,6 +2,14 @@
    Web app di timbratura con badge QR, installata da ogni dipendente sul
    proprio telefono. Allineata a Portieri 2.0.
 
+   NOVITÀ 2.5.0 — 30/09/2026 — "Le tue presenze"
+   Il riepilogo settimanale diventa mensile: frecce per il mese (fino a
+   12 mesi indietro) e fila di pulsanti per la settimana, più "Tutto il
+   mese". All'apertura è scelta la settimana in corso; nei mesi passati
+   si parte da "Tutto il mese". Nessun totale: per ogni giorno orari,
+   barra con la pausa pranzo, durata al netto del pranzo, ferie/permessi e
+   straordinario. Lo script del registro (v5) risponde a ?id=&mese=.
+
    2.4.2 — 30/09/2026: l'app si aggiorna da sola quando esce una versione
    nuova (su iPhone l'app installata resta in memoria e continuava a usare
    quella vecchia); se il registro non risponde si vede il motivo
@@ -90,7 +98,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.4.2";
+const APP_VERSION = "2.5.0";
 const LAST_UPDATE = "2026-09-30";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -117,7 +125,7 @@ const HIST_KEY = "cai_studio_storico_v1";   // timbrature di questo telefono, ul
 const HIST_DAYS = 16;
 const WEEK_TIMEOUT_MS = 40000;              // la prima lettura del giorno può richiedere 10-15 s
 const BADGE_KEY = "cai_studio_badge_v1";    // badge di chi usa questo telefono (ultimo letto)
-const WEEK_KEY = "cai_studio_settimana_v1"; // ultima risposta del registro per il riepilogo settimanale
+const MESI_KEY = "cai_studio_mesi_v1";      // mesi letti dal registro per "Le tue presenze"
 const PAUSA = { da: 13 * 60, a: 14 * 60 };  // pausa pranzo, tolta in automatico dal tempo in studio
 const STATUS_EVERY_MS = 3 * 60 * 1000;  // aggiornamento mentre l'app è aperta
 const STATUS_AFTER_SEND_MS = 4000;      // rilettura dopo una timbratura
@@ -139,9 +147,10 @@ const state = {
   flushing: false,
   remote: null,            // { date: "YYYY-MM-DD", events: [{id,tipo,ora}], assenze: [{id,tipo,intera,ore}], at: ms }
   statusLoading: false,
-  week: null,              // { id, date, giorni: { "YYYY-MM-DD": {events, assenze, straordinario} }, at }
-  weekLoading: false,
-  weekOffset: 0            // 0 = questa settimana, 1 = la scorsa
+  presenze: null,          // { id, mesi: { "YYYY-MM": { giorni: { "YYYY-MM-DD": {...} }, at, errore, motivo } } }
+  meseLoading: new Set(),
+  meseSel: "",             // mese mostrato in "Le tue presenze"
+  settSel: "corrente"      // "corrente" | "tutto" | lunedì "YYYY-MM-DD"
 };
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -963,42 +972,83 @@ function switchPanel(name){
   } else {
     state.read = null;
     stopCamera();              // la fotocamera si spegne fuori dalla schermata principale
-    if(name === "week"){ state.weekOffset = 0; renderWeek(); fetchWeek(); }
+    if(name === "week"){ state.meseSel = meseCorrente(); state.settSel = "corrente"; renderWeek(); fetchWeek(state.meseSel); }
     if(name === "manual") prepareManual();
   }
   try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch(e) { window.scrollTo(0, 0); }
 }
 
-/* ---------- Riepilogo settimanale (v2.4.0) ----------
-   Sostituisce "Timbrature di oggi". Settimana corrente e precedente del
-   solo badge di questo telefono (ultimo letto): lo script del registro
-   con ?id= restituisce solo i dati di quel badge. Alle timbrature del
-   registro si aggiungono quelle di questo telefono non ancora arrivate
-   (in coda, o inviate da poco), così la pagina è giusta anche offline.
-   Nessuna lettura periodica: si aggiorna all'apertura della pagina. */
+/* ---------- Le tue presenze (v2.5.0) ----------
+   Sostituisce il riepilogo settimanale della 2.4. Un mese per volta
+   (fino a 12 mesi indietro) con il selettore della settimana: all'apertura
+   è scelta la settimana in corso; nei mesi passati "Tutto il mese".
+   Solo il badge di questo telefono (ultimo letto): lo script del registro
+   con ?id=&mese= restituisce solo i dati di quel badge, con le settimane
+   intere ai bordi del mese. Alle timbrature del registro si aggiungono
+   quelle di questo telefono non ancora arrivate (in coda, o inviate da
+   poco). Ogni mese letto resta sul telefono. Nessuna lettura periodica:
+   si aggiorna all'apertura della pagina e al cambio di mese. */
 const GIORNI = ["Dom", "Lun", "Mar", "Mer", "Gio", "Ven", "Sab"];
 const EXTRA_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 1.5M9 2.5h6M12 2.5V5"/></svg>';
 const MESI = ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"];
+const MESI_LUNGHI = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"];
+const MESI_INDIETRO = 12;
 
 function myBadge(){
   const id = readStore(BADGE_KEY, "");
   return empById(id) ? id : "";
 }
-function loadWeekCache(){
-  const w = readStore(WEEK_KEY, null);
-  if(w && w.id && w.giorni && typeof w.giorni === "object") state.week = w;
+function meseCorrente(){ return todayISO().slice(0, 7); }
+function meseSposta(ym, n){
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, m - 1 + n, 1, 12);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
 }
-async function fetchWeek(){
+function meseMinimo(){ return meseSposta(meseCorrente(), -MESI_INDIETRO); }
+function lunedi(d){
+  const x = new Date(d); x.setHours(12, 0, 0, 0);
+  x.setDate(x.getDate() - (x.getDay() + 6) % 7);
+  return x;
+}
+function isoToDate(iso){ const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d, 12); }
+
+/* Dati per badge: { id, mesi: { "YYYY-MM": { giorni: {ISO: {...}}, at } } } */
+function loadMesiCache(){
+  const c = readStore(MESI_KEY, null);
+  if(c && c.id && c.mesi && typeof c.mesi === "object") state.presenze = c;
+}
+function saveMesiCache(){
+  if(!state.presenze) return;
+  const min = meseMinimo();
+  const mesi = {};
+  Object.keys(state.presenze.mesi).filter(k => k >= min).forEach(k => {
+    const { giorni, at } = state.presenze.mesi[k];
+    if(at) mesi[k] = { giorni, at };
+  });
+  writeStore(MESI_KEY, { id: state.presenze.id, mesi });
+}
+function datiMese(ym){
+  const id = myBadge();
+  if(!state.presenze || state.presenze.id !== id) state.presenze = { id, mesi: {} };
+  if(!state.presenze.mesi[ym]) state.presenze.mesi[ym] = { giorni: {}, at: 0 };
+  return state.presenze.mesi[ym];
+}
+
+async function fetchWeek(ym){
   const id = myBadge();
   const url = state.config.status_url;
-  if(!id || !url || state.weekLoading || !navigator.onLine) return;
-  state.weekLoading = true;
+  const mese = typeof ym === "string" ? ym : (state.meseSel || meseCorrente());
+  if(!id || !url || !navigator.onLine) { renderWeekStato(); return; }
+  if(state.meseLoading.has(mese)) return;
+  state.meseLoading.add(mese);
   renderWeekStato();
+  const dati = datiMese(mese);
   const leggi = async () => {
     const ctrl = ("AbortController" in window) ? new AbortController() : null;
     const t = ctrl ? setTimeout(() => ctrl.abort(), WEEK_TIMEOUT_MS) : null;
     try {
-      const res = await fetch(`${url}${url.includes("?") ? "&" : "?"}id=${encodeURIComponent(id)}`, { cache: "no-store", signal: ctrl?.signal });
+      const sep = url.includes("?") ? "&" : "?";
+      const res = await fetch(`${url}${sep}id=${encodeURIComponent(id)}&mese=${mese}`, { cache: "no-store", signal: ctrl?.signal });
       if(!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
     } finally { if(t) clearTimeout(t); }
@@ -1007,8 +1057,8 @@ async function fetchWeek(){
     let data;
     try { data = await leggi(); }
     catch(e) { if(!navigator.onLine) throw e; data = await leggi(); }   // secondo tentativo
-    // Lo script v3 (non aggiornato) ignora ?id=: niente "giorni"
-    if(!data || !data.giorni || typeof data.giorni !== "object") throw new Error("script");
+    // Script non aggiornato alla v5: niente "mese" nella risposta
+    if(!data || !data.giorni || typeof data.giorni !== "object" || data.mese !== mese) throw new Error("script");
     const giorni = {};
     Object.keys(data.giorni).forEach(k => {
       const [d, m, y] = k.split("/");
@@ -1025,31 +1075,32 @@ async function fetchWeek(){
         straordinarioGiornata: g.straordinarioGiornata === true
       };
     });
-    state.week = { id, giorni, at: Date.now(), ok: true };
-    writeStore(WEEK_KEY, state.week);
+    dati.giorni = giorni;
+    dati.at = Date.now();
+    dati.errore = false; dati.motivo = "";
+    saveMesiCache();
   } catch(e) {
-    const motivo = e && e.name === "AbortError" ? "tempo scaduto"
+    dati.errore = true;
+    dati.motivo = e && e.name === "AbortError" ? "tempo scaduto"
       : e && e.name === "SyntaxError" ? "risposta non valida"
       : e && e.message === "script" ? "script da aggiornare"
       : e && /^HTTP/.test(e.message || "") ? e.message
       : "errore di rete";
-    if(state.week && state.week.id === id){ state.week.errore = true; state.week.motivo = motivo; }
-    else state.week = { id, giorni: {}, at: 0, ok: false, errore: true, motivo };
   } finally {
-    state.weekLoading = false;
-    renderWeek();
+    state.meseLoading.delete(mese);
+    if(state.panel === "week") renderWeek();
   }
 }
 
-/* Lunedì della settimana (offset 0 = questa, 1 = la scorsa) */
-function lunediDi(offset){
-  const d = new Date(); d.setHours(12, 0, 0, 0);
-  const dow = (d.getDay() + 6) % 7;   // 0 = lunedì
-  d.setDate(d.getDate() - dow - 7 * offset);
-  return d;
-}
+/* Giorno: dati del registro (da qualunque mese letto che lo contenga,
+   il più recente) più le timbrature di questo telefono non ancora lì */
 function giornoInfo(iso, id){
-  const remoto = (state.week && state.week.id === id && state.week.giorni[iso]) || null;
+  let remoto = null, at = -1;
+  if(state.presenze && state.presenze.id === id){
+    Object.values(state.presenze.mesi).forEach(m => {
+      if(m.giorni && m.giorni[iso] && m.at > at){ remoto = m.giorni[iso]; at = m.at; }
+    });
+  }
   const rEv = remoto ? remoto.events : [];
   const locali = loadHist()
     .filter(e => e.employee_id === id && e.data === iso)
@@ -1073,25 +1124,45 @@ function assenzaTesto(a){
   const ore = String(Math.round(a.ore * 10) / 10).replace(".", ",");
   return `${a.tipo} ${ore} h`;
 }
+function etichettaSettimana(lun){
+  const ven = new Date(lun); ven.setDate(lun.getDate() + 4);
+  return lun.getMonth() === ven.getMonth()
+    ? `${lun.getDate()} – ${ven.getDate()} ${MESI[ven.getMonth()]}`
+    : `${lun.getDate()} ${MESI[lun.getMonth()]} – ${ven.getDate()} ${MESI[ven.getMonth()]}`;
+}
 
 function renderWeekStato(){
   const el = $("#week-stato");
   if(!el) return;
   el.classList.toggle("week-stato--warn", false);
-  const hm = state.week && state.week.at ? toHM(new Date(state.week.at)) : "";
-  if(state.weekLoading){ el.textContent = "Aggiornamento dal registro…"; return; }
+  const mese = state.meseSel || meseCorrente();
+  const dati = state.presenze && state.presenze.id === myBadge() ? state.presenze.mesi[mese] : null;
+  const hm = dati && dati.at ? toHM(new Date(dati.at)) : "";
+  if(state.meseLoading.has(mese)){ el.textContent = "Aggiornamento dal registro…"; return; }
   if(!navigator.onLine){ el.textContent = hm ? `Offline · dati delle ${hm}` : "Offline"; return; }
-  if(state.week && state.week.errore){
+  if(dati && dati.errore){
     el.classList.add("week-stato--warn");
-    const m = state.week.motivo ? ` (${state.week.motivo})` : "";
+    const m = dati.motivo ? ` (${dati.motivo})` : "";
     el.textContent = hm ? `Aggiornamento non riuscito${m} · dati delle ${hm} ` : `Registro non raggiungibile${m} `;
     const b = document.createElement("button");
     b.type = "button"; b.className = "link-inline"; b.textContent = "Riprova";
-    b.addEventListener("click", fetchWeek);
+    b.addEventListener("click", () => fetchWeek(mese));
     el.appendChild(b);
     return;
   }
   el.textContent = hm ? `Aggiornato alle ${hm}` : "";
+}
+
+/* Settimane (lunedì) che toccano il mese, fino a quella in corso */
+function settimaneDelMese(ym){
+  const [y, m] = ym.split("-").map(Number);
+  const primo = new Date(y, m - 1, 1, 12), ultimo = new Date(y, m, 0, 12);
+  const oggiLun = lunedi(new Date());
+  const out = [];
+  for(let l = lunedi(primo); l <= ultimo && l <= oggiLun; l = new Date(l.getFullYear(), l.getMonth(), l.getDate() + 7, 12)){
+    out.push(l);
+  }
+  return out;
 }
 
 function renderWeek(){
@@ -1102,43 +1173,73 @@ function renderWeek(){
   $("#week-empty").hidden = !!emp;
   $("#week-body").hidden = !emp;
   renderWeekPending();
+  if(!state.meseSel) state.meseSel = meseCorrente();
   renderWeekStato();
   if(!emp) return;
   $("#week-nome").textContent = emp.nome;
 
-  const lun = lunediDi(state.weekOffset);
-  const ven = new Date(lun); ven.setDate(lun.getDate() + 4);
-  $("#week-label").textContent = lun.getMonth() === ven.getMonth()
-    ? `${lun.getDate()} – ${ven.getDate()} ${MESI[ven.getMonth()]}`
-    : `${lun.getDate()} ${MESI[lun.getMonth()]} – ${ven.getDate()} ${MESI[ven.getMonth()]}`;
-  $("#week-prev").disabled = state.weekOffset >= 1;
-  $("#week-next").disabled = state.weekOffset <= 0;
+  const mese = state.meseSel;
+  const [y, m] = mese.split("-").map(Number);
+  $("#week-label").textContent = `${MESI_LUNGHI[m - 1]} ${y}`;
+  $("#week-prev").disabled = mese <= meseMinimo();
+  $("#week-next").disabled = mese >= meseCorrente();
 
+  // Selettore della settimana
   const oggi = todayISO();
-  const adesso = toHM(new Date());
-  const giorni = [];
-  for(let i = 0; i < 7; i++){
-    const d = new Date(lun); d.setDate(lun.getDate() + i);
-    const iso = toISODate(d);
-    const info = giornoInfo(iso, id);
-    // Sabato e domenica solo se c'è qualcosa
-    if(i >= 5 && !info.events.length && !info.assenze.length && !info.straordinario && !info.straordinarioGiornata) continue;
-    const g = turniDa(info.events);
-    const live = (iso === oggi && g.aperto) ? { da: g.aperto, a: adesso > g.aperto ? adesso : g.aperto } : null;
-    giorni.push({ d, iso, info, g, live, futuro: iso > oggi, oggi: iso === oggi });
+  const lunOggi = toISODate(lunedi(new Date()));
+  const settimane = settimaneDelMese(mese);
+  if(state.settSel === "corrente"){
+    state.settSel = settimane.some(l => toISODate(l) === lunOggi) ? lunOggi : "tutto";
+  }
+  if(state.settSel !== "tutto" && !settimane.some(l => toISODate(l) === state.settSel)) state.settSel = "tutto";
+  const chips = $("#week-chips");
+  const cf = document.createDocumentFragment();
+  const chip = (key, testo) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.dataset.sett = key; b.textContent = testo;
+    b.setAttribute("aria-pressed", String(state.settSel === key));
+    cf.appendChild(b);
+  };
+  // "Tutto il mese" per primo, poi le settimane dalla più recente
+  chip("tutto", "Tutto il mese");
+  settimane.slice().reverse().forEach(l => { const k = toISODate(l); chip(k, k === lunOggi ? "Questa settimana" : etichettaSettimana(l)); });
+  chips.replaceChildren(cf);
+  const attivo = chips.querySelector('[aria-pressed="true"]');
+  if(attivo){
+    const sx = attivo.offsetLeft - chips.offsetLeft, dx = sx + attivo.offsetWidth;
+    if(sx < chips.scrollLeft || dx > chips.scrollLeft + chips.clientWidth) chips.scrollLeft = Math.max(0, sx - 8);
   }
 
-  // Scala comune a tutta la settimana: dalla prima entrata all'ultima uscita
+  // Giorni da mostrare, raggruppati per settimana (la più recente in cima)
+  const adesso = toHM(new Date());
+  const gruppi = [];
+  const scelte = state.settSel === "tutto" ? settimane.slice().reverse() : settimane.filter(l => toISODate(l) === state.settSel);
+  scelte.forEach(l => {
+    const giorni = [];
+    for(let i = 0; i < 7; i++){
+      const d = new Date(l.getFullYear(), l.getMonth(), l.getDate() + i, 12);
+      const iso = toISODate(d);
+      // In "Tutto il mese" solo i giorni del mese; la settimana singola è intera
+      if(state.settSel === "tutto" && iso.slice(0, 7) !== mese) continue;
+      const info = giornoInfo(iso, id);
+      if(i >= 5 && !info.events.length && !info.assenze.length && !info.straordinario && !info.straordinarioGiornata) continue;
+      const g = turniDa(info.events);
+      const live = (iso === oggi && g.aperto) ? { da: g.aperto, a: adesso > g.aperto ? adesso : g.aperto } : null;
+      giorni.push({ d, iso, info, g, live, futuro: iso > oggi, oggi: iso === oggi });
+    }
+    if(giorni.length) gruppi.push({ l, giorni });
+  });
+
+  // Scala comune ai giorni mostrati: dalla prima entrata all'ultima uscita
   let lo = Infinity, hi = -Infinity;
-  giorni.forEach(x => {
+  gruppi.forEach(gr => gr.giorni.forEach(x => {
     x.g.turni.forEach(t => { lo = Math.min(lo, hmToMin(t.da)); hi = Math.max(hi, hmToMin(t.a)); });
     if(x.live){ lo = Math.min(lo, hmToMin(x.live.da)); hi = Math.max(hi, hmToMin(x.live.a)); }
-  });
+  }));
   const scala = isFinite(lo) && hi > lo ? [lo, hi] : null;
 
   const el = (tag, cls, txt) => { const e = document.createElement(tag); if(cls) e.className = cls; if(txt != null) e.textContent = txt; return e; };
-  const frag = document.createDocumentFragment();
-  giorni.forEach(x => {
+  const giornoEl = x => {
     const li = el("li", "day" + (x.oggi ? " day--oggi" : "") + (x.futuro ? " day--futuro" : ""));
     const top = el("div", "day-top");
     const nome = el("span", "day-nome", GIORNI[x.d.getDay()]);
@@ -1172,9 +1273,40 @@ function renderWeek(){
         el("b", null, x.info.straordinario > 0 ? `+ ${fmtOreStr(x.info.straordinario)}` : "giornata intera"));
       li.appendChild(ex);
     }
-    frag.appendChild(li);
+    return li;
+  };
+
+  const frag = document.createDocumentFragment();
+  if(!gruppi.length){
+    frag.appendChild(el("p", "week-vuoto", "Nessuna presenza in questo periodo."));
+  }
+  gruppi.forEach(gr => {
+    const sec = el("section", "sett");
+    if(state.settSel === "tutto"){
+      const h = el("div", "sett-h");
+      h.append(el("span", null, toISODate(gr.l) === lunOggi ? "Questa settimana" : "Settimana"), el("span", null, etichettaSettimana(gr.l)));
+      sec.appendChild(h);
+    }
+    const ul = el("ul", "days");
+    gr.giorni.forEach(x => ul.appendChild(giornoEl(x)));
+    sec.appendChild(ul);
+    frag.appendChild(sec);
   });
   box.replaceChildren(frag);
+}
+
+function cambiaMese(n){
+  const nuovo = meseSposta(state.meseSel || meseCorrente(), n);
+  if(nuovo < meseMinimo() || nuovo > meseCorrente()) return;
+  state.meseSel = nuovo;
+  state.settSel = nuovo === meseCorrente() ? "corrente" : "tutto";
+  renderWeek();
+  const dati = state.presenze && state.presenze.id === myBadge() ? state.presenze.mesi[nuovo] : null;
+  // Mesi chiusi già letti: non serve rileggerli
+  const [ny, nm] = nuovo.split("-").map(Number);
+  const chiuso = dati && !dati.errore && dati.at > new Date(ny, nm, 1).getTime();
+  if(!chiuso) fetchWeek(nuovo);
+  try { $("#panel-week").scrollIntoView({ block: "start" }); } catch(e) {}
 }
 
 /* Timbrature di questo telefono non ancora arrivate al registro */
@@ -1418,7 +1550,7 @@ function onVisibility(){
     fetchStatus();
     flushQueue();
     if(state.panel === "main") backToScan();
-    if(state.panel === "week"){ renderWeek(); fetchWeek(); }
+    if(state.panel === "week"){ renderWeek(); fetchWeek(state.meseSel); }
   }
 }
 
@@ -1433,8 +1565,14 @@ function wireEvents(){
   $("#btn-entrata").addEventListener("click", () => chooseTipo("entrata"));
   $("#btn-uscita").addEventListener("click", () => chooseTipo("uscita"));
   $("#btn-annulla").addEventListener("click", cancelRead);
-  $("#week-prev").addEventListener("click", () => { state.weekOffset = 1; renderWeek(); });
-  $("#week-next").addEventListener("click", () => { state.weekOffset = 0; renderWeek(); });
+  $("#week-prev").addEventListener("click", () => cambiaMese(-1));
+  $("#week-next").addEventListener("click", () => cambiaMese(1));
+  $("#week-chips").addEventListener("click", ev => {
+    const b = ev.target.closest("[data-sett]");
+    if(!b) return;
+    state.settSel = b.dataset.sett;
+    renderWeek();
+  });
   $("#btn-camera").addEventListener("click", startCamera);
   $("#done-card").addEventListener("click", backToScan);
   document.addEventListener("visibilitychange", onVisibility);
@@ -1461,14 +1599,15 @@ function mostraApp(){ document.documentElement.classList.add("app-pronta"); }
     initManual();
     renderBadges();
     renderQueuePill();
-    loadWeekCache();
+    loadMesiCache();
+    try { localStorage.removeItem("cai_studio_settimana_v1"); } catch(e) {}   // cache della 2.4
   } finally {
     mostraApp();
   }
   fetchStatus();
   // Riepilogo settimanale letto in anticipo, in background: quando lo si
   // apre i dati ci sono già (la prima lettura del registro è lenta)
-  setTimeout(() => { if(myBadge()) fetchWeek(); }, 3000);
+  setTimeout(() => { if(myBadge()) fetchWeek(meseCorrente()); }, 3000);
   await setupDetector();
   startCamera();
   requestWakeLock();
