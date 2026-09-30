@@ -2,6 +2,16 @@
    Web app di timbratura con badge QR, installata da ogni dipendente sul
    proprio telefono. Allineata a Portieri 2.0.
 
+   NOVITÀ 2.6.0 — 30/09/2026
+   - Letto il badge la timbratura si registra subito con il tipo proposto
+     dal registro (Entrata se si risulta fuori, Uscita se in studio): niente
+     più scelta né conferma. Per correggere resta l'Inserimento manuale.
+   - Il registro comanda: le timbrature di questo telefono già inviate si
+     aggiungono a quelle del registro solo nei primi minuti (finché il
+     registro non le ha ancora); dopo, se nel registro non ci sono perché
+     cancellate (es. prove), non si vedono più né in "In studio adesso" né
+     in "Le tue presenze". Quelle ancora da inviare restano sempre.
+
    2.5.1 — 30/09/2026: sabato e domenica non compaiono più solo perché
    coperti da un periodo di ferie.
 
@@ -101,7 +111,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.5.1";
+const APP_VERSION = "2.6.0";
 const LAST_UPDATE = "2026-09-30";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -251,13 +261,25 @@ function saveHist(h){
 /* Timbrature di oggi di un collega, in ordine di orario: quelle del
    registro condiviso più quelle di questo dispositivo non ancora
    presenti nel registro (in coda, o inviate da pochi istanti). */
+/* Una timbratura di questo telefono si somma al registro solo se non è
+   ancora inviata, oppure se è stata inviata da poco (il registro può non
+   averla ancora: invio a Make, memoria di 2 minuti dello script). Oltre
+   questo margine vale il registro: se lì manca, è stata cancellata. */
+const LOCALE_MARGINE_MS = 5 * 60 * 1000;
+function localeValida(e, registroAt){
+  if(e.status !== "sent") return true;
+  if(!registroAt) return true;
+  return (e.created || 0) > registroAt - LOCALE_MARGINE_MS;
+}
 function todayEventsOf(empId){
   const today = todayISO();
   const remote = (state.remote && state.remote.date === today)
     ? state.remote.events.filter(e => e.id === empId).map(e => ({ tipo: e.tipo, ora: e.ora, created: 0 }))
     : [];
+  const registroAt = (state.remote && state.remote.date === today) ? state.remote.at : 0;
   const local = loadDay().events
     .filter(e => e.employee_id === empId && e.data === today)
+    .filter(e => localeValida(e, registroAt))
     .filter(e => !remote.some(r => r.tipo === e.tipo && r.ora === e.ora));
   return remote.concat(local)
     .sort((a, b) => a.ora.localeCompare(b.ora) || (a.created || 0) - (b.created || 0));
@@ -728,20 +750,8 @@ function openRead(emp){
   $("#read-name").textContent = emp.nome;
   $("#read-time").textContent = `Badge letto alle ${toHM(at)}`;
 
-  const p = presenceOf(emp.id);
-  $("#read-reason").textContent = p.stato === "in"
-    ? "Risulta in studio: proposta Uscita. Tocca per registrare."
-    : p.stato === "out"
-      ? "Risulta uscito: proposta Entrata (rientro). Tocca per registrare."
-      : "Primo passaggio di oggi: proposta Entrata. Tocca per registrare.";
-
-  [["entrata", "#btn-entrata", "#hint-entrata"], ["uscita", "#btn-uscita", "#hint-uscita"]].forEach(([t, b, h]) => {
-    $(b).setAttribute("aria-checked", String(t === tipo));
-    $(h).textContent = t === tipo ? "proposta" : "";
-  });
-
-  showMainCard("read");
-  try { $(tipo === "entrata" ? "#btn-entrata" : "#btn-uscita").focus({ preventScroll: true }); } catch(e) {}
+  // v2.6.0: niente scelta né conferma, si registra subito il tipo proposto
+  confirmRead();
 }
 
 function chooseTipo(tipo){
@@ -1098,7 +1108,7 @@ async function fetchWeek(ym){
 /* Giorno: dati del registro (da qualunque mese letto che lo contenga,
    il più recente) più le timbrature di questo telefono non ancora lì */
 function giornoInfo(iso, id){
-  let remoto = null, at = -1;
+  let remoto = null, at = 0;
   if(state.presenze && state.presenze.id === id){
     Object.values(state.presenze.mesi).forEach(m => {
       if(m.giorni && m.giorni[iso] && m.at > at){ remoto = m.giorni[iso]; at = m.at; }
@@ -1107,6 +1117,7 @@ function giornoInfo(iso, id){
   const rEv = remoto ? remoto.events : [];
   const locali = loadHist()
     .filter(e => e.employee_id === id && e.data === iso)
+    .filter(e => localeValida(e, remoto ? at : 0))
     .filter(e => !rEv.some(r => r.tipo === e.tipo && r.ora === e.ora))
     .map(e => ({ tipo: e.tipo, ora: e.ora, created: e.created || 0 }));
   const events = rEv.map(e => ({ ...e, created: 0 })).concat(locali)
