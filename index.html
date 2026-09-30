@@ -42,7 +42,7 @@
         <button type="button" class="button primary" id="btn-camera" hidden>Attiva fotocamera</button>
       </section>
 
-      <!-- Badge letto: tipo proposto, registrazione automatica -->
+      <!-- Badge letto: tipo proposto evidenziato, un tocco registra (v2.4.0) -->
       <section class="card card--read" id="read-card" hidden aria-live="polite">
         <div class="read-hero">
           <div class="avatar" id="read-initials">—</div>
@@ -57,18 +57,8 @@
             USCITA<small id="hint-uscita"></small>
           </button>
         </div>
-        <div class="countdown">
-          <svg class="ring" viewBox="0 0 40 40" aria-hidden="true">
-            <circle class="ring-bg" cx="20" cy="20" r="16"></circle>
-            <circle class="ring-fg" id="ring-fg" cx="20" cy="20" r="16"></circle>
-          </svg>
-          <span id="countdown-text">Registro tra 4 secondi</span>
-        </div>
-        <div class="actions actions--two">
-          <button type="button" class="button" id="btn-annulla">Annulla</button>
-          <button type="button" class="button primary" id="btn-conferma">Registra ora</button>
-        </div>
         <p class="muted small center" id="read-reason"></p>
+        <button type="button" class="link-btn" id="btn-annulla">Annulla</button>
       </section>
 
       <!-- Esito -->
@@ -92,7 +82,7 @@
 
       <nav class="links" aria-label="Altre funzioni">
         <button type="button" class="chip" data-panel="manual">Inserimento manuale</button>
-        <button type="button" class="chip" data-panel="today">Timbrature di oggi</button>
+        <button type="button" class="chip" data-panel="week">Riepilogo settimanale</button>
         <button type="button" class="chip" data-panel="badges">Badge</button>
       </nav>
     </main>
@@ -157,14 +147,34 @@
       </div>
     </section>
 
-    <!-- ===== Timbrature di oggi ===== -->
-    <section id="panel-today" class="panel" hidden>
-      <div class="card card--history">
+    <!-- ===== Riepilogo settimanale (v2.4.0) ===== -->
+    <section id="panel-week" class="panel" hidden>
+      <div class="card card--week">
         <button type="button" class="back-btn" data-panel="main">← Torna indietro</button>
-        <h2>Timbrature di oggi</h2>
-        <p class="muted small">Da questo dispositivo, a solo scopo di riscontro. Il registro ufficiale resta il foglio dello studio.</p>
-        <ul class="history-list" id="history-list"></ul>
-        <p class="muted small" id="history-empty">Nessuna timbratura oggi da questo dispositivo.</p>
+
+        <div class="week-pending" id="week-pending" hidden>
+          <h3>Da inviare</h3>
+          <p class="muted small">Timbrature salvate su questo telefono, partono da sole appena possibile.</p>
+          <ul class="history-list" id="week-pending-list"></ul>
+        </div>
+
+        <div class="week-head">
+          <h2>La tua settimana</h2>
+          <span class="muted small" id="week-stato" aria-live="polite"></span>
+        </div>
+
+        <p class="week-empty" id="week-empty" hidden>Timbra una volta con il tuo badge: da quel momento qui trovi la tua settimana, anche fuori dallo studio.</p>
+
+        <div id="week-body" hidden>
+          <p class="week-nome" id="week-nome"></p>
+          <div class="week-nav">
+            <button type="button" id="week-prev" aria-label="Settimana precedente">‹</button>
+            <span id="week-label"></span>
+            <button type="button" id="week-next" aria-label="Settimana successiva">›</button>
+          </div>
+          <ul class="days" id="week-days"></ul>
+          <p class="muted small week-note">Durate al netto della pausa pranzo 13–14.</p>
+        </div>
       </div>
     </section>
 
@@ -180,7 +190,7 @@
 
     <footer class="footer">
       <span>© <span id="year"></span> Studio CAI</span>
-      <span class="version-badge" id="version-badge">v2.1.12</span>
+      <span class="version-badge" id="version-badge">v2.4.0</span>
     </footer>
   </div>
 

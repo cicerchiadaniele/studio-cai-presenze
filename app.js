@@ -1,6 +1,28 @@
-/* Studio CAI — Presenze studio v2.1.12
+/* Studio CAI — Presenze studio v2.4.0
    Web app di timbratura con badge QR, installata da ogni dipendente sul
    proprio telefono. Allineata a Portieri 2.0.
+
+   NOVITÀ 2.4.0 — 30/09/2026
+   (le cartelle 2.2.0 e 2.3.0 in Dropbox sono le prove "In assemblea",
+   abbandonate: questa versione parte dalla 2.1.12)
+   - Letto il badge restano i pulsanti Entrata/Uscita con il tipo proposto,
+     ma senza conto alla rovescia: un tocco registra subito. Se lo schermo
+     si spegne o l'app va in background con la scelta aperta, si registra
+     il tipo proposto (prima la timbratura veniva annullata).
+   - Invio a prova di schermo spento: la timbratura entra prima nella coda
+     del telefono e poi parte l'invio (fetch keepalive, che il browser
+     completa anche a pagina nascosta). Payload verso Make invariato.
+   - Riepilogo all'uscita: la barra va dalla prima entrata all'ultima
+     uscita con gli orari veri agli estremi (non più 08:00–19:00); le
+     uscite intermedie sono tratteggiate; la pausa pranzo è sempre segnata
+     con forchetta e coltello quando cade nella giornata.
+   - "Timbrature di oggi" sostituito dal Riepilogo settimanale: settimana
+     corrente e precedente, per giorno orari, barra, durata al netto del
+     pranzo, ferie/permessi e straordinari dell'app Portieri. Ognuno vede
+     solo la propria: il telefono ricorda l'ultimo badge letto e lo script
+     del registro (v4, parametro ?id=) restituisce solo i dati di quel
+     badge. Si consulta anche fuori studio. Le timbrature in attesa di
+     invio, con Riprova, sono in cima a questa pagina.
 
    NOVITÀ 2.1.2 — Riepilogo all'uscita
    Dopo l'Uscita la schermata di esito mostra il riepilogo della giornata
@@ -57,8 +79,8 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.1.12";
-const LAST_UPDATE = "2026-09-29";
+const APP_VERSION = "2.4.0";
+const LAST_UPDATE = "2026-09-30";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
   status_url: ""
@@ -72,7 +94,6 @@ const EMPLOYEES_DEFAULT = [
 const QR_PREFIX = "CAI-BADGE:";
 const QUEUE_KEY = "cai_studio_queue_v1";
 const DAY_KEY = "cai_studio_oggi_v1";
-const COUNTDOWN_S = 4;              // secondi prima della registrazione automatica
 const COOLDOWN_MS = 2 * 60 * 1000;  // stesso badge entro 2 minuti: ignorato
 const DONE_MS = 3000;               // durata della schermata di esito
 const DONE_EXIT_MS = 8000;          // dopo l'Uscita, con il riepilogo della giornata
@@ -81,7 +102,10 @@ const MAX_AUTO_ATTEMPTS = 3;
 const MANUAL_WINDOW_DAYS = 31;
 const POST_TIMEOUT_MS = 10000;
 const REMOTE_KEY = "cai_studio_stato_v1";
-const ORARIO = { da: 9 * 60, a: 18 * 60 };  // orario di lavoro dello studio (per la barra del riepilogo)
+const HIST_KEY = "cai_studio_storico_v1";   // timbrature di questo telefono, ultimi giorni (per il riepilogo settimanale)
+const HIST_DAYS = 16;
+const BADGE_KEY = "cai_studio_badge_v1";    // badge di chi usa questo telefono (ultimo letto)
+const WEEK_KEY = "cai_studio_settimana_v1"; // ultima risposta del registro per il riepilogo settimanale
 const PAUSA = { da: 13 * 60, a: 14 * 60 };  // pausa pranzo, tolta in automatico dal tempo in studio
 const STATUS_EVERY_MS = 3 * 60 * 1000;  // aggiornamento mentre l'app è aperta
 const STATUS_AFTER_SEND_MS = 4000;      // rilettura dopo una timbratura
@@ -97,13 +121,15 @@ const state = {
   scanTimer: null,
   lastInvalid: { text: "", at: 0 },
   read: null,              // { emp, at: Date, tipo }
-  countdown: null,
-  countLeft: COUNTDOWN_S,
+  inFlight: new Set(),     // request_id in invio in questo momento
   doneTimer: null,
   wakeLock: null,
   flushing: false,
   remote: null,            // { date: "YYYY-MM-DD", events: [{id,tipo,ora}], assenze: [{id,tipo,intera,ore}], at: ms }
-  statusLoading: false
+  statusLoading: false,
+  week: null,              // { id, date, giorni: { "YYYY-MM-DD": {events, assenze, straordinario} }, at }
+  weekLoading: false,
+  weekOffset: 0            // 0 = questa settimana, 1 = la scorsa
 };
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -175,11 +201,28 @@ function addEvent(ev){
   const day = loadDay();
   day.events.push(ev);
   saveDay(day);
+  // Storico degli ultimi giorni (riepilogo settimanale anche prima che il
+  // registro sia aggiornato, o senza rete)
+  const h = loadHist();
+  h.push(ev);
+  saveHist(h);
 }
 function setEventStatus(requestId, status){
   const day = loadDay();
   const ev = day.events.find(e => e.request_id === requestId);
   if(ev){ ev.status = status; saveDay(day); }
+  const h = loadHist();
+  const he = h.find(e => e.request_id === requestId);
+  if(he){ he.status = status; saveHist(h); }
+}
+function loadHist(){
+  const h = readStore(HIST_KEY, []);
+  return Array.isArray(h) ? h : [];
+}
+function saveHist(h){
+  const min = new Date(); min.setDate(min.getDate() - HIST_DAYS);
+  const lim = toISODate(min);
+  writeStore(HIST_KEY, h.filter(e => e && e.data >= lim));
 }
 /* Timbrature di oggi di un collega, in ordine di orario: quelle del
    registro condiviso più quelle di questo dispositivo non ancora
@@ -357,50 +400,84 @@ function renderQueuePill(){
     : (q.length === 1 ? "1 timbratura in attesa" : `${q.length} timbrature in attesa`);
 }
 
-async function postJSON(url, payload){
+/* keepalive: il browser porta a termine l'invio anche se la pagina viene
+   nascosta o chiusa (schermo spento subito dopo la timbratura). Se il
+   browser non accetta keepalive per questa richiesta, si riprova subito
+   senza (errore immediato, la richiesta non è partita). */
+async function postJSON(url, payload, keepalive = true){
   const ctrl = ("AbortController" in window) ? new AbortController() : null;
   const t = ctrl ? setTimeout(() => ctrl.abort(), POST_TIMEOUT_MS) : null;
+  const t0 = Date.now();
   try {
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
       mode: "cors",
+      keepalive,
       signal: ctrl?.signal
     });
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
     return res;
+  } catch(e) {
+    if(keepalive && e && e.name === "TypeError" && Date.now() - t0 < 300 && navigator.onLine && !document.hidden){
+      if(t) clearTimeout(t);
+      return postJSON(url, payload, false);
+    }
+    throw e;
   } finally { if(t) clearTimeout(t); }
+}
+
+function removeFromQueue(requestId){
+  const q = loadQueue().filter(i => i.payload.request_id !== requestId);
+  saveQueue(q);
+}
+function bumpAttempts(requestId){
+  const q = loadQueue();
+  const item = q.find(i => i.payload.request_id === requestId);
+  if(!item) return 0;
+  item.attempts = (item.attempts || 0) + 1;
+  saveQueue(q);
+  return item.attempts;
+}
+
+/* Invia una timbratura già in coda. Un solo invio per volta per ogni
+   request_id, così coda e invio diretto non creano doppioni. */
+async function sendQueued(payload){
+  const id = payload.request_id;
+  if(state.inFlight.has(id)) return "busy";
+  state.inFlight.add(id);
+  try {
+    await postJSON(state.config.webhook_url, payload);
+    removeFromQueue(id);
+    setEventStatus(id, "sent");
+    return "sent";
+  } catch(e) {
+    const n = bumpAttempts(id);
+    if(n >= MAX_AUTO_ATTEMPTS) setEventStatus(id, "held");
+    return "queued";
+  } finally {
+    state.inFlight.delete(id);
+  }
 }
 
 /* I tentativi automatici sono limitati: se il webhook riceve ma la
    risposta non torna, un ritentativo perpetuo creerebbe doppioni. */
 async function flushQueue(){
   if(state.flushing || !navigator.onLine) return;
-  const q = loadQueue();
-  if(!q.length) return;
+  if(!loadQueue().length) return;
   state.flushing = true;
   try {
-    let i = 0;
-    while(i < q.length){
-      const item = q[i];
-      if((item.attempts || 0) >= MAX_AUTO_ATTEMPTS){ i++; continue; }
-      try {
-        await postJSON(state.config.webhook_url, item.payload);
-        q.splice(i, 1);
-        saveQueue(q);
-        setEventStatus(item.payload.request_id, "sent");
-      } catch(e) {
-        item.attempts = (item.attempts || 0) + 1;
-        if(item.attempts >= MAX_AUTO_ATTEMPTS) setEventStatus(item.payload.request_id, "held");
-        saveQueue(q);
-        break;
-      }
+    for(const item of loadQueue()){
+      if((item.attempts || 0) >= MAX_AUTO_ATTEMPTS) continue;
+      if(state.inFlight.has(item.payload.request_id)) continue;
+      const res = await sendQueued(item.payload);
+      if(res === "queued") break;   // rete ancora giù: si riprova più tardi
     }
   } finally {
     state.flushing = false;
     renderQueuePill();
-    renderHistory();
+    renderWeekPending();
     if(!loadQueue().length) setTimeout(fetchStatus, STATUS_AFTER_SEND_MS);
   }
 }
@@ -411,12 +488,14 @@ function retryHeld(requestId){
   item.attempts = 0;
   saveQueue(q);
   setEventStatus(requestId, "queued");
-  renderHistory();
+  renderWeekPending();
   flushQueue();
 }
 
-/* Registra: salva sul dispositivo, poi invia; se non va, in coda. */
-async function submitEvent(payload){
+/* Registra: prima nella coda del telefono (sopravvive a schermo spento,
+   app chiusa, rete assente), poi invia. Il salvataggio è sincrono: quando
+   la funzione restituisce il controllo la timbratura è già al sicuro. */
+function submitEvent(payload){
   addEvent({
     request_id: payload.request_id,
     employee_id: payload.employee_id,
@@ -428,24 +507,14 @@ async function submitEvent(payload){
     status: "queued",
     created: Date.now()
   });
+  enqueue(payload);
   renderWho();
-
-  if(!navigator.onLine){
-    enqueue(payload);
-    renderHistory();
-    return "queued";
-  }
-  try {
-    await postJSON(state.config.webhook_url, payload);
-    setEventStatus(payload.request_id, "sent");
-    renderHistory();
-    setTimeout(fetchStatus, STATUS_AFTER_SEND_MS);
-    return "sent";
-  } catch(e) {
-    enqueue(payload);
-    renderHistory();
-    return "queued";
-  }
+  if(!navigator.onLine){ renderWeekPending(); return Promise.resolve("queued"); }
+  return sendQueued(payload).then(res => {
+    renderWeekPending();
+    if(res === "sent") setTimeout(fetchStatus, STATUS_AFTER_SEND_MS);
+    return res === "sent" ? "sent" : "queued";
+  });
 }
 
 function buildPayload({ emp, tipo, when, data, ora, metodo, note }){
@@ -615,10 +684,16 @@ function onCode(text){
   }
 
   try { navigator.vibrate?.(120); } catch(e) {}
+  // Il telefono ricorda di chi è (ultimo badge letto): serve al riepilogo
+  // settimanale, consultabile anche fuori studio
+  writeStore(BADGE_KEY, emp.id);
   openRead(emp);
 }
 
-/* ---------- Badge letto ---------- */
+/* ---------- Badge letto ----------
+   Pulsanti Entrata/Uscita con il tipo proposto evidenziato: un tocco
+   registra subito (niente più conto alla rovescia, v2.4.0). Se lo schermo
+   si spegne con la scelta aperta si registra il tipo proposto. */
 function openRead(emp){
   const at = new Date();
   const tipo = suggestTipo(emp.id);
@@ -631,55 +706,32 @@ function openRead(emp){
 
   const p = presenceOf(emp.id);
   $("#read-reason").textContent = p.stato === "in"
-    ? "Risulta in studio: proposta Uscita."
+    ? "Risulta in studio: proposta Uscita. Tocca per registrare."
     : p.stato === "out"
-      ? "Risulta uscito: proposta Entrata (rientro)."
-      : "Primo passaggio di oggi: proposta Entrata.";
+      ? "Risulta uscito: proposta Entrata (rientro). Tocca per registrare."
+      : "Primo passaggio di oggi: proposta Entrata. Tocca per registrare.";
 
-  showMainCard("read");
-  selectTipo(tipo, false);
-  startCountdown();
-  try { $("#btn-conferma").focus({ preventScroll: true }); } catch(e) {}
-}
-
-function selectTipo(tipo, restart = true){
-  if(!state.read) return;
-  state.read.tipo = tipo;
-  const suggested = suggestTipo(state.read.emp.id);
   [["entrata", "#btn-entrata", "#hint-entrata"], ["uscita", "#btn-uscita", "#hint-uscita"]].forEach(([t, b, h]) => {
     $(b).setAttribute("aria-checked", String(t === tipo));
-    $(h).textContent = t === tipo ? (t === suggested ? "proposto" : "scelto") : "tocca per scegliere";
+    $(h).textContent = t === tipo ? "proposta" : "";
   });
-  if(restart) startCountdown();
+
+  showMainCard("read");
+  try { $(tipo === "entrata" ? "#btn-entrata" : "#btn-uscita").focus({ preventScroll: true }); } catch(e) {}
 }
 
-function startCountdown(){
-  stopCountdown();
-  state.countLeft = COUNTDOWN_S;
-  renderCountdown();
-  state.countdown = setInterval(() => {
-    state.countLeft--;
-    if(state.countLeft <= 0){ stopCountdown(); confirmRead(); }
-    else renderCountdown();
-  }, 1000);
-}
-function stopCountdown(){ if(state.countdown){ clearInterval(state.countdown); state.countdown = null; } }
-function renderCountdown(){
-  const C = 2 * Math.PI * 16;
-  const fg = $("#ring-fg");
-  fg.style.strokeDasharray = String(C);
-  fg.style.strokeDashoffset = String(C * (1 - state.countLeft / COUNTDOWN_S));
-  $("#countdown-text").textContent = state.countLeft === 1 ? "Registro tra 1 secondo" : `Registro tra ${state.countLeft} secondi`;
+function chooseTipo(tipo){
+  if(!state.read) return;
+  state.read.tipo = tipo;
+  confirmRead();
 }
 
 function cancelRead(){
-  stopCountdown();
   state.read = null;
   backToScan();
 }
 
-async function confirmRead(){
-  stopCountdown();
+function confirmRead(){
   const r = state.read;
   if(!r) return;
   state.read = null;
@@ -689,14 +741,20 @@ async function confirmRead(){
     data: toISODate(r.at), ora: toHM(r.at), metodo: "qr"
   });
 
-  showDone({ tipo: r.tipo, nome: r.emp.nome, ora: payload.ora, status: "sending" });
-  const res = await submitEvent(payload);
-  showDone({ tipo: r.tipo, nome: r.emp.nome, ora: payload.ora, status: res });
+  const sending = submitEvent(payload);   // già salvata in coda qui
+  showDone({ tipo: r.tipo, nome: r.emp.nome, ora: payload.ora, status: navigator.onLine ? "sending" : "queued" });
   renderRiepilogo(r.tipo === "uscita" ? r.emp.id : null);
-
   clearTimeout(state.doneTimer);
-  const ms = r.tipo === "uscita" ? DONE_EXIT_MS : (res === "queued" ? DONE_MS + 1500 : DONE_MS);
-  state.doneTimer = setTimeout(backToScan, ms);
+  state.doneTimer = setTimeout(backToScan, r.tipo === "uscita" ? DONE_EXIT_MS : DONE_MS);
+
+  sending.then(res => {
+    if(state.mode !== "done") return;
+    showDone({ tipo: r.tipo, nome: r.emp.nome, ora: payload.ora, status: res });
+    if(res === "queued" && r.tipo !== "uscita"){
+      clearTimeout(state.doneTimer);
+      state.doneTimer = setTimeout(backToScan, DONE_MS + 1500);
+    }
+  });
 }
 
 /* ---------- Riepilogo della giornata (dopo l'Uscita) ----------
@@ -705,14 +763,13 @@ async function confirmRead(){
    (non dovrebbe capitare, l'ultimo passaggio è l'uscita) resta aperta.
    Pausa pranzo: la parte di ogni tratto che cade tra 13:00 e 14:00 non
    si conta (chi esce alle 13 e rientra alle 14 non perde nulla). */
-function giornataDi(empId){
-  const toMin = hm => { const [h, m] = hm.split(":").map(Number); return h * 60 + m; };
+function turniDa(events){
   const turni = [];
   let aperto = null, pausa = 0;
-  todayEventsOf(empId).forEach(e => {
+  events.forEach(e => {
     if(e.tipo === "entrata"){ if(!aperto) aperto = e.ora; }
     else if(e.tipo === "uscita" && aperto){
-      const da = toMin(aperto), a = toMin(e.ora);
+      const da = hmToMin(aperto), a = hmToMin(e.ora);
       const lordo = Math.max(0, a - da);
       const inPausa = Math.max(0, Math.min(a, PAUSA.a) - Math.max(da, PAUSA.da));
       pausa += inPausa;
@@ -720,8 +777,9 @@ function giornataDi(empId){
       aperto = null;
     }
   });
-  return { turni, pausa, totale: turni.reduce((s, t) => s + t.min, 0) };
+  return { turni, aperto, pausa, totale: turni.reduce((s, t) => s + t.min, 0) };
 }
+function giornataDi(empId){ return turniDa(todayEventsOf(empId)); }
 function fmtDurata(min){
   const h = Math.floor(min / 60), m = min % 60;
   return h ? (m ? `${h} h ${pad(m)} min` : `${h} h`) : `${m} min`;
@@ -731,6 +789,82 @@ function saluto(ora){
   // "Buon pranzo" fino alle 14, in linea con la pausa pranzo 13–14
   return h < 12 ? "A dopo" : h < 14 ? "Buon pranzo" : h < 18 ? "Buon pomeriggio" : "Buona serata";
 }
+/* Barra di una giornata. turni: [{da:"HH:MM", a:"HH:MM"}]; opzioni:
+   scala [min, max] in minuti (comune a tutta la settimana nel riepilogo
+   settimanale; altrimenti dalla prima entrata all'ultima uscita), live
+   (tratto in corso {da, a}), etichette (orari agli estremi, sotto).
+   Tratti in studio spezzati sulla pausa pranzo, uscite intermedie
+   tratteggiate, pausa segnata con forchetta e coltello. */
+const FORCHETTA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8M4.5 3v5a2.5 2.5 0 0 0 5 0V3M7 11v10M17 21V3c-2.2 1.2-3.5 3.6-3.5 7v3.5H17"/></svg>';
+function hmToMin(hm){ const [h, m] = String(hm).split(":").map(Number); return h * 60 + m; }
+function minToHm(x){ return `${pad(Math.floor(x / 60))}:${pad(x % 60)}`; }
+function senzaPausa(x, y){
+  if(y <= PAUSA.da || x >= PAUSA.a) return [[x, y]];
+  return [[x, Math.min(y, PAUSA.da)], [Math.max(x, PAUSA.a), y]].filter(([p, q]) => q > p);
+}
+function barraGiornata(turni, opt = {}){
+  const el = (tag, cls) => { const e = document.createElement(tag); if(cls) e.className = cls; return e; };
+  const pezzi = turni.map(t => [hmToMin(t.da), hmToMin(t.a)]);
+  if(opt.live) pezzi.push([hmToMin(opt.live.da), hmToMin(opt.live.a)]);
+  let lo, hi;
+  if(opt.scala){ [lo, hi] = opt.scala; }
+  else {
+    lo = Math.min(...pezzi.map(p => p[0]));
+    hi = Math.max(...pezzi.map(p => p[1]));
+  }
+  if(!(hi > lo)) hi = lo + 1;
+  const span = hi - lo;
+  const pct = x => `${((x - lo) / span) * 100}%`;
+  const w = (x, y) => `${((y - x) / span) * 100}%`;
+
+  const wrap = el("div", "tl");
+  wrap.setAttribute("aria-hidden", "true");
+  const bar = el("div", "tl-bar");
+  const seg = (cls, x, y, minW) => {
+    const s = el("span", cls);
+    s.style.left = pct(x);
+    s.style.width = minW ? `max(${w(x, y)}, ${minW})` : w(x, y);
+    bar.appendChild(s);
+  };
+  turni.forEach((t, i) => {
+    const x = hmToMin(t.da), y = hmToMin(t.a);
+    senzaPausa(x, y).forEach(([p, q]) => seg("tl-seg", p, q, "4px"));
+    const n = turni[i + 1] || (opt.live ? { da: opt.live.da } : null);
+    if(n){
+      const nx = hmToMin(n.da);
+      if(nx > y) senzaPausa(y, nx).forEach(([p, q]) => seg("tl-gap", p, q));
+    }
+  });
+  if(opt.live){
+    const x = hmToMin(opt.live.da), y = hmToMin(opt.live.a);
+    senzaPausa(x, y).forEach(([p, q]) => seg("tl-live", p, q, "4px"));
+  }
+  const p0 = Math.max(PAUSA.da, lo), p1 = Math.min(PAUSA.a, hi);
+  if(p1 > p0){
+    const p = el("span", "tl-pausa");
+    p.style.left = pct(p0);
+    p.style.width = w(p0, p1);
+    p.title = "Pausa pranzo";
+    p.innerHTML = FORCHETTA;
+    bar.appendChild(p);
+  }
+  wrap.appendChild(bar);
+
+  if(opt.etichette){
+    const sc = el("div", "tl-scala");
+    const lab = (cls, ora, testo) => {
+      const s = el("span", `tl-t ${cls}`);
+      s.textContent = ora;
+      const i = el("i"); i.textContent = testo; s.appendChild(i);
+      sc.appendChild(s);
+    };
+    lab("first", minToHm(lo), "entrata");
+    lab("last", minToHm(hi), "uscita");
+    wrap.appendChild(sc);
+  }
+  return wrap;
+}
+
 function renderRiepilogo(empId){
   const box = $("#done-riepilogo");
   const card = $("#done-card");
@@ -738,7 +872,6 @@ function renderRiepilogo(empId){
   if(!empId){ box.hidden = true; card?.classList.remove("card--exit"); return; }
   const emp = empById(empId);
   const g = giornataDi(empId);
-  const toMin = hm => { const [h, m] = hm.split(":").map(Number); return h * 60 + m; };
   const el = (tag, cls, txt) => { const e = document.createElement(tag); if(cls) e.className = cls; if(txt != null) e.textContent = txt; return e; };
   const frag = document.createDocumentFragment();
 
@@ -757,37 +890,9 @@ function renderRiepilogo(empId){
     tot.append(el("span", "rp-num", h ? pad(m) : String(m)), el("span", "rp-unit", "min"));
     frag.appendChild(tot);
 
-    // Barra della giornata sull'orario di lavoro 09:00–18:00 (si allarga
-    // se si entra prima o si esce dopo)
-    const primo = toMin(g.turni[0].da), ultimo = toMin(ultima);
-    const da = Math.min(ORARIO.da, Math.floor(primo / 60) * 60);
-    const a = Math.max(ORARIO.a, Math.ceil(ultimo / 60) * 60);
-    const bar = el("div", "rp-bar");
-    bar.setAttribute("aria-hidden", "true");
-    const pct = x => `${((x - da) / (a - da)) * 100}%`;
-    // Ora di pranzo: uno stacco nella barra con forchetta e coltello
-    const p = el("span", "rp-pausa");
-    p.style.left = pct(PAUSA.da);
-    p.style.width = `${((PAUSA.a - PAUSA.da) / (a - da)) * 100}%`;
-    p.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8M4.5 3v5a2.5 2.5 0 0 0 5 0V3M7 11v10M17 21V3c-2.2 1.2-3.5 3.6-3.5 7v3.5H17"/></svg>';
-    bar.appendChild(p);
-    // Tratti in studio, spezzati sulla pausa pranzo
-    g.turni.forEach(t => {
-      const s0 = toMin(t.da), s1 = toMin(t.a);
-      const parti = (s1 <= PAUSA.da || s0 >= PAUSA.a) ? [[s0, s1]]
-        : [[s0, Math.min(s1, PAUSA.da)], [Math.max(s0, PAUSA.a), s1]].filter(([x, y]) => y > x);
-      parti.forEach(([x, y]) => {
-        const s = el("span", "rp-seg");
-        s.style.left = pct(x);
-        s.style.width = `${Math.max(1.5, ((y - x) / (a - da)) * 100)}%`;
-        bar.appendChild(s);
-      });
-    });
-    const scala = el("div", "rp-scala");
-    scala.setAttribute("aria-hidden", "true");
-    const hm = x => `${pad(Math.floor(x / 60))}:${pad(x % 60)}`;
-    [da, a].forEach(x => scala.appendChild(el("span", null, hm(x))));
-    frag.append(bar, scala);
+    // Barra della giornata dalla prima entrata all'ultima uscita, con gli
+    // orari veri agli estremi (v2.4.0)
+    frag.appendChild(barraGiornata(g.turni, { etichette: true }));
 
     // Dettaglio dei tratti solo se nella giornata ce n'è più di uno
     if(g.turni.length > 1){
@@ -828,7 +933,6 @@ function showMainCard(which){
 
 function backToScan(){
   clearTimeout(state.doneTimer);
-  stopCountdown();
   state.mode = "scan";
   showMainCard("scan");
   setScanIdle();
@@ -841,60 +945,237 @@ function backToScan(){
 /* ---------- Pannelli ---------- */
 function switchPanel(name){
   state.panel = name;
-  ["main", "manual", "today", "badges"].forEach(p => { $("#panel-" + p).hidden = p !== name; });
+  ["main", "manual", "week", "badges"].forEach(p => { $("#panel-" + p).hidden = p !== name; });
   if(name === "main"){
     backToScan();
   } else {
-    stopCountdown();
     state.read = null;
     stopCamera();              // la fotocamera si spegne fuori dalla schermata principale
-    if(name === "today") renderHistory();
+    if(name === "week"){ state.weekOffset = 0; renderWeek(); fetchWeek(); }
     if(name === "manual") prepareManual();
   }
   try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch(e) { window.scrollTo(0, 0); }
 }
 
-/* ---------- Timbrature di oggi ---------- */
-const STATUS_LABEL = { sent: "Inviata", queued: "In attesa", held: "Da riprovare" };
+/* ---------- Riepilogo settimanale (v2.4.0) ----------
+   Sostituisce "Timbrature di oggi". Settimana corrente e precedente del
+   solo badge di questo telefono (ultimo letto): lo script del registro
+   con ?id= restituisce solo i dati di quel badge. Alle timbrature del
+   registro si aggiungono quelle di questo telefono non ancora arrivate
+   (in coda, o inviate da poco), così la pagina è giusta anche offline.
+   Nessuna lettura periodica: si aggiorna all'apertura della pagina. */
+const GIORNI = ["Dom", "Lun", "Mar", "Mer", "Gio", "Ven", "Sab"];
+const EXTRA_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 1.5M9 2.5h6M12 2.5V5"/></svg>';
+const MESI = ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"];
 
-function renderHistory(){
-  const list = $("#history-list");
-  const empty = $("#history-empty");
-  if(!list) return;
-  const evs = loadDay().events.slice().sort((a, b) => b.created - a.created);
-  empty.hidden = evs.length > 0;
+function myBadge(){
+  const id = readStore(BADGE_KEY, "");
+  return empById(id) ? id : "";
+}
+function loadWeekCache(){
+  const w = readStore(WEEK_KEY, null);
+  if(w && w.id && w.giorni && typeof w.giorni === "object") state.week = w;
+}
+async function fetchWeek(){
+  const id = myBadge();
+  const url = state.config.status_url;
+  if(!id || !url || state.weekLoading || !navigator.onLine) return;
+  state.weekLoading = true;
+  renderWeekStato();
+  const ctrl = ("AbortController" in window) ? new AbortController() : null;
+  const t = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
+  try {
+    const res = await fetch(`${url}${url.includes("?") ? "&" : "?"}id=${encodeURIComponent(id)}`, { cache: "no-store", signal: ctrl?.signal });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    // Lo script v3 (non aggiornato) ignora ?id=: niente "giorni"
+    if(!data || !data.giorni || typeof data.giorni !== "object") throw new Error("script");
+    const giorni = {};
+    Object.keys(data.giorni).forEach(k => {
+      const [d, m, y] = k.split("/");
+      if(!(d && m && y)) return;
+      const g = data.giorni[k] || {};
+      giorni[`${y}-${pad(+m)}-${pad(+d)}`] = {
+        events: (Array.isArray(g.events) ? g.events : [])
+          .map(e => ({ tipo: String(e.tipo || "").toLowerCase(), ora: String(e.ora || "").slice(0, 5) }))
+          .filter(e => (e.tipo === "entrata" || e.tipo === "uscita") && /^\d{2}:\d{2}$/.test(e.ora)),
+        assenze: (Array.isArray(g.assenze) ? g.assenze : [])
+          .map(a => ({ tipo: String(a.tipo || ""), intera: a.intera !== false, ore: Number(a.ore) || 0 }))
+          .filter(a => a.tipo),
+        straordinario: Math.max(0, Math.round(Number(g.straordinario) || 0)),
+        straordinarioGiornata: g.straordinarioGiornata === true
+      };
+    });
+    state.week = { id, giorni, at: Date.now(), ok: true };
+    writeStore(WEEK_KEY, state.week);
+  } catch(e) {
+    if(state.week && state.week.id === id) state.week.errore = true;
+    else state.week = { id, giorni: {}, at: 0, ok: false, errore: true };
+  } finally {
+    if(t) clearTimeout(t);
+    state.weekLoading = false;
+    renderWeek();
+  }
+}
 
+/* Lunedì della settimana (offset 0 = questa, 1 = la scorsa) */
+function lunediDi(offset){
+  const d = new Date(); d.setHours(12, 0, 0, 0);
+  const dow = (d.getDay() + 6) % 7;   // 0 = lunedì
+  d.setDate(d.getDate() - dow - 7 * offset);
+  return d;
+}
+function giornoInfo(iso, id){
+  const remoto = (state.week && state.week.id === id && state.week.giorni[iso]) || null;
+  const rEv = remoto ? remoto.events : [];
+  const locali = loadHist()
+    .filter(e => e.employee_id === id && e.data === iso)
+    .filter(e => !rEv.some(r => r.tipo === e.tipo && r.ora === e.ora))
+    .map(e => ({ tipo: e.tipo, ora: e.ora, created: e.created || 0 }));
+  const events = rEv.map(e => ({ ...e, created: 0 })).concat(locali)
+    .sort((a, b) => a.ora.localeCompare(b.ora) || a.created - b.created);
+  return {
+    events,
+    assenze: remoto ? remoto.assenze : [],
+    straordinario: remoto ? remoto.straordinario : 0,
+    straordinarioGiornata: !!(remoto && remoto.straordinarioGiornata)
+  };
+}
+function fmtOreStr(min){
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? (m ? `${h} h ${pad(m)} min` : `${h} h`) : `${m} min`;
+}
+function assenzaTesto(a){
+  if(a.intera || !a.ore) return a.tipo;
+  const ore = String(Math.round(a.ore * 10) / 10).replace(".", ",");
+  return `${a.tipo} ${ore} h`;
+}
+
+function renderWeekStato(){
+  const el = $("#week-stato");
+  if(!el) return;
+  if(state.weekLoading){ el.textContent = "Aggiornamento…"; return; }
+  if(!navigator.onLine){ el.textContent = "Offline: ultimi dati disponibili"; return; }
+  if(state.week && state.week.errore){ el.textContent = "Registro non raggiungibile: dati di questo telefono"; return; }
+  if(state.week && state.week.at){ el.textContent = `Aggiornato alle ${toHM(new Date(state.week.at))}`; return; }
+  el.textContent = "";
+}
+
+function renderWeek(){
+  const box = $("#week-days");
+  if(!box) return;
+  const id = myBadge();
+  const emp = empById(id);
+  $("#week-empty").hidden = !!emp;
+  $("#week-body").hidden = !emp;
+  renderWeekPending();
+  renderWeekStato();
+  if(!emp) return;
+  $("#week-nome").textContent = emp.nome;
+
+  const lun = lunediDi(state.weekOffset);
+  const ven = new Date(lun); ven.setDate(lun.getDate() + 4);
+  $("#week-label").textContent = lun.getMonth() === ven.getMonth()
+    ? `${lun.getDate()} – ${ven.getDate()} ${MESI[ven.getMonth()]}`
+    : `${lun.getDate()} ${MESI[lun.getMonth()]} – ${ven.getDate()} ${MESI[ven.getMonth()]}`;
+  $("#week-prev").disabled = state.weekOffset >= 1;
+  $("#week-next").disabled = state.weekOffset <= 0;
+
+  const oggi = todayISO();
+  const adesso = toHM(new Date());
+  const giorni = [];
+  for(let i = 0; i < 7; i++){
+    const d = new Date(lun); d.setDate(lun.getDate() + i);
+    const iso = toISODate(d);
+    const info = giornoInfo(iso, id);
+    // Sabato e domenica solo se c'è qualcosa
+    if(i >= 5 && !info.events.length && !info.assenze.length && !info.straordinario && !info.straordinarioGiornata) continue;
+    const g = turniDa(info.events);
+    const live = (iso === oggi && g.aperto) ? { da: g.aperto, a: adesso > g.aperto ? adesso : g.aperto } : null;
+    giorni.push({ d, iso, info, g, live, futuro: iso > oggi, oggi: iso === oggi });
+  }
+
+  // Scala comune a tutta la settimana: dalla prima entrata all'ultima uscita
+  let lo = Infinity, hi = -Infinity;
+  giorni.forEach(x => {
+    x.g.turni.forEach(t => { lo = Math.min(lo, hmToMin(t.da)); hi = Math.max(hi, hmToMin(t.a)); });
+    if(x.live){ lo = Math.min(lo, hmToMin(x.live.da)); hi = Math.max(hi, hmToMin(x.live.a)); }
+  });
+  const scala = isFinite(lo) && hi > lo ? [lo, hi] : null;
+
+  const el = (tag, cls, txt) => { const e = document.createElement(tag); if(cls) e.className = cls; if(txt != null) e.textContent = txt; return e; };
   const frag = document.createDocumentFragment();
-  evs.forEach(ev => {
+  giorni.forEach(x => {
+    const li = el("li", "day" + (x.oggi ? " day--oggi" : "") + (x.futuro ? " day--futuro" : ""));
+    const top = el("div", "day-top");
+    const nome = el("span", "day-nome", GIORNI[x.d.getDay()]);
+    nome.appendChild(el("small", null, `${pad(x.d.getDate())}/${pad(x.d.getMonth() + 1)}`));
+    const dur = el("span", "day-dur");
+    top.append(nome, dur);
+    li.appendChild(top);
+
+    if(x.g.turni.length) dur.textContent = fmtDurata(x.g.totale);
+    else if(x.live){ dur.textContent = "in corso"; dur.classList.add("day-dur--live"); }
+    else if(!x.info.assenze.length) dur.textContent = "—";
+
+    const orari = x.g.turni.map(t => `${t.da} – ${t.a}`);
+    if(x.live) orari.push(`in studio dalle ${x.live.da}`);
+    else if(x.g.aperto) orari.push(`entrata ${x.g.aperto}`);
+    if(orari.length) li.appendChild(el("div", "day-orari", orari.join(" · ")));
+
+    if(scala && (x.g.turni.length || x.live)){
+      li.appendChild(barraGiornata(x.g.turni, { scala, live: x.live }));
+    }
+
+    const tag = [];
+    x.info.assenze.forEach(a => tag.push(el("span", "day-tag day-tag--assenza", assenzaTesto(a))));
+    if(!x.live && x.g.aperto && !x.futuro) tag.push(el("span", "day-tag day-tag--warn", "Uscita non timbrata"));
+    if(tag.length){ const w = el("div", "day-tags"); w.append(...tag); li.appendChild(w); }
+
+    if(x.info.straordinario > 0 || x.info.straordinarioGiornata){
+      const ex = el("div", "day-extra");
+      const ic = el("i"); ic.innerHTML = EXTRA_ICON;
+      ex.append(ic, document.createTextNode("Straordinario"),
+        el("b", null, x.info.straordinario > 0 ? `+ ${fmtOreStr(x.info.straordinario)}` : "giornata intera"));
+      li.appendChild(ex);
+    }
+    frag.appendChild(li);
+  });
+  box.replaceChildren(frag);
+}
+
+/* Timbrature di questo telefono non ancora arrivate al registro */
+function renderWeekPending(){
+  const box = $("#week-pending");
+  const list = $("#week-pending-list");
+  if(!box || !list) return;
+  const q = loadQueue();
+  box.hidden = !q.length;
+  if(!q.length){ list.replaceChildren(); return; }
+  const frag = document.createDocumentFragment();
+  q.slice().sort((a, b) => (a.payload.data + a.payload.ora).localeCompare(b.payload.data + b.payload.ora)).forEach(item => {
+    const pl = item.payload;
+    const held = (item.attempts || 0) >= MAX_AUTO_ATTEMPTS;
     const li = document.createElement("li");
     li.className = "history-item";
-
     const text = document.createElement("span");
     text.className = "history-text";
     const time = document.createElement("span");
     time.className = "history-time";
-    time.textContent = ev.ora;
-    text.appendChild(time);
-    let desc = `${ev.nome} · ${tipoLabel(ev.tipo)}`;
-    if(ev.metodo === "manuale") desc += " (manuale)";
-    if(ev.data !== todayISO()) desc += ` · ${formatDay(ev.data)}`;
-    text.appendChild(document.createTextNode(desc));
-
+    time.textContent = pl.data === todayISO() ? pl.ora : `${formatDay(pl.data)} ${pl.ora}`;
+    text.append(time, document.createTextNode(`${pl.nome} · ${tipoLabel(pl.tipo)}${pl.metodo === "manuale" ? " (manuale)" : ""}`));
     const side = document.createElement("span");
     side.className = "history-side";
-    if(ev.status === "held"){
+    if(held){
       const b = document.createElement("button");
-      b.type = "button";
-      b.className = "chip";
-      b.textContent = "Riprova";
-      b.dataset.retry = ev.request_id;
+      b.type = "button"; b.className = "chip"; b.textContent = "Riprova";
+      b.dataset.retry = pl.request_id;
       side.appendChild(b);
     }
     const badge = document.createElement("span");
-    badge.className = `history-status history-status--${ev.status}`;
-    badge.textContent = STATUS_LABEL[ev.status] || ev.status;
+    badge.className = `history-status history-status--${held ? "held" : "queued"}`;
+    badge.textContent = held ? "Da riprovare" : "In attesa";
     side.appendChild(badge);
-
     li.append(text, side);
     frag.appendChild(li);
   });
@@ -1067,10 +1348,15 @@ async function requestWakeLock(){
   } catch(e) { state.wakeLock = null; }
 }
 
+/* Schermo spento o app in background con la scelta Entrata/Uscita aperta:
+   si registra il tipo proposto (v2.4.0). submitEvent salva subito in coda
+   e l'invio keepalive prosegue anche a pagina nascosta. */
+function registraSeInSospeso(){
+  if(state.mode === "read" && state.read) confirmRead();
+}
 function onVisibility(){
   if(document.hidden){
-    stopCountdown();
-    if(state.mode === "read"){ state.read = null; state.mode = "scan"; showMainCard("scan"); }
+    registraSeInSospeso();
     stopCamera();           // niente fotocamera accesa in background
   } else {
     requestWakeLock();
@@ -1078,6 +1364,7 @@ function onVisibility(){
     fetchStatus();
     flushQueue();
     if(state.panel === "main") backToScan();
+    if(state.panel === "week"){ renderWeek(); fetchWeek(); }
   }
 }
 
@@ -1089,13 +1376,16 @@ function wireEvents(){
     const r = ev.target.closest("[data-retry]");
     if(r){ retryHeld(r.dataset.retry); }
   });
-  $("#btn-entrata").addEventListener("click", () => selectTipo("entrata"));
-  $("#btn-uscita").addEventListener("click", () => selectTipo("uscita"));
+  $("#btn-entrata").addEventListener("click", () => chooseTipo("entrata"));
+  $("#btn-uscita").addEventListener("click", () => chooseTipo("uscita"));
   $("#btn-annulla").addEventListener("click", cancelRead);
-  $("#btn-conferma").addEventListener("click", confirmRead);
+  $("#week-prev").addEventListener("click", () => { state.weekOffset = 1; renderWeek(); });
+  $("#week-next").addEventListener("click", () => { state.weekOffset = 0; renderWeek(); });
   $("#btn-camera").addEventListener("click", startCamera);
   $("#done-card").addEventListener("click", backToScan);
   document.addEventListener("visibilitychange", onVisibility);
+  // iOS: pagehide arriva anche quando visibilitychange non fa in tempo
+  window.addEventListener("pagehide", registraSeInSospeso);
 }
 
 function setFooter(){
@@ -1117,7 +1407,7 @@ function mostraApp(){ document.documentElement.classList.add("app-pronta"); }
     initManual();
     renderBadges();
     renderQueuePill();
-    renderHistory();
+    loadWeekCache();
   } finally {
     mostraApp();
   }

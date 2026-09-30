@@ -1,5 +1,5 @@
 /* Studio CAI — Presenze studio
-   v2.1.12 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
+   v2.4.0 — stessa identità visiva di Portieri 2.0 e Segnalazioni:
    fondo crema, Fraunces per i titoli, Manrope per il testo, schede morbide.
 
    FONT
@@ -187,11 +187,13 @@ html.app-pronta .container{opacity:1;animation:none;transition:opacity 160ms eas
 .tipo-btn:active{transform:scale(.98)}
 .tipo-btn--entrata[aria-checked="true"]{background-color:var(--ok);border-color:var(--ok);color:#fff;box-shadow:0 8px 20px -10px rgba(63,107,84,.8)}
 .tipo-btn--uscita[aria-checked="true"]{background-color:var(--primary);border-color:var(--primary);color:#fff;box-shadow:0 8px 20px -10px rgba(139,21,56,.8)}
-.countdown{display:flex;align-items:center;justify-content:center;gap:12px;font-weight:700;font-size:15px}
-.ring{width:38px;height:38px;flex:none}
-.ring circle{fill:none;stroke-width:4}
-.ring-bg{stroke:var(--crema-scura)}
-.ring-fg{stroke:var(--primary);stroke-linecap:round;transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset 1s linear}
+/* v2.4.0: niente conto alla rovescia, un tocco sul tipo registra */
+.link-btn{
+  justify-self:center;align-self:center;background:none;border:0;padding:6px 14px;
+  font-family:inherit;font-size:14px;font-weight:700;color:var(--muted);cursor:pointer;border-radius:999px;
+}
+.link-btn:focus-visible{outline:none;box-shadow:0 0 0 4px var(--ring)}
+@media (hover:hover){.link-btn:hover{color:var(--primary)}}
 .read-reason{margin:0}
 #read-reason{margin:0}
 
@@ -224,18 +226,31 @@ html.app-pronta .container{opacity:1;animation:none;transition:opacity 160ms eas
 .rp-num{font-family:var(--font-display);font-weight:600;font-size:46px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .rp-unit{font-size:15px;font-weight:800;margin-right:8px;opacity:.75}
 .rp-unit:last-child{margin-right:0}
-.rp-bar{position:relative;height:14px;border-radius:999px;background-color:rgba(139,21,56,.10)}
-.rp-seg{position:absolute;top:0;bottom:0;border-radius:999px;background-image:linear-gradient(90deg,#A3294F,var(--primary))}
-/* Ora di pranzo 13–14 (v2.1.6): stacco nella barra con forchetta e coltello */
-.rp-pausa{
-  position:absolute;top:-3px;bottom:-3px;
+/* Barra della giornata (v2.4.0): dalla prima entrata all'ultima uscita.
+   Usata nel riepilogo all'uscita e, più sottile, in quello settimanale. */
+.tl{margin-top:2px}
+.tl-bar{position:relative;height:14px;border-radius:999px;background-color:rgba(139,21,56,.08)}
+.tl-seg{position:absolute;top:0;bottom:0;border-radius:999px;background-image:linear-gradient(90deg,#A3294F,var(--primary));box-shadow:0 2px 6px -3px rgba(139,21,56,.6)}
+/* Uscite in mezzo alla giornata: tratteggio */
+.tl-gap{position:absolute;top:calc(50% - 2px);height:4px;background-image:repeating-linear-gradient(90deg,rgba(139,21,56,.35) 0 4px,transparent 4px 8px)}
+/* Giornata in corso */
+.tl-live{position:absolute;top:0;bottom:0;border-radius:999px;background-image:repeating-linear-gradient(90deg,var(--ok) 0 6px,#7FA58F 6px 10px)}
+/* Pausa pranzo 13–14: stacco con forchetta e coltello, sempre segnato */
+.tl-pausa{
+  position:absolute;top:-4px;bottom:-4px;min-width:22px;
   display:flex;align-items:center;justify-content:center;
   border-radius:999px;background-color:#fff;
   box-shadow:0 0 0 1px #EEDDE3, 0 2px 6px -3px rgba(139,21,56,.35);
   color:var(--warn);
 }
-.rp-pausa svg{width:12px;height:12px;display:block}
-.rp-scala{display:flex;justify-content:space-between;margin-top:6px;font-size:11px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
+.tl-pausa svg{width:12px;height:12px;display:block}
+/* Orari veri agli estremi, con la parola sotto */
+.tl-scala{position:relative;height:32px;margin-top:6px}
+.tl-t{position:absolute;top:0;display:flex;flex-direction:column;font-size:11.5px;font-weight:800;line-height:1.3;font-variant-numeric:tabular-nums;color:var(--text);white-space:nowrap}
+.tl-t i{font-style:normal;font-size:9.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.tl-t.first{left:0;align-items:flex-start}
+.tl-t.last{right:0;align-items:flex-end}
+.riepilogo .tl-bar{background-color:rgba(139,21,56,.10)}
 .rp-turni{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:6px}
 .rp-turni li{
   display:flex;justify-content:space-between;align-items:center;gap:12px;
@@ -335,7 +350,55 @@ input[type="date"],input[type="time"]{cursor:pointer}
 }
 .back-btn:hover{text-decoration:underline}
 
-/* --- Timbrature di oggi --- */
+/* --- Riepilogo settimanale (v2.4.0) --- */
+.card--week{padding:24px 22px}
+.week-pending{margin:0 0 22px;padding:16px;border-radius:20px;background-color:var(--warn-tenue);border:1px solid #F0DDBB}
+.week-pending h3{margin:0;font-family:var(--font-display);font-weight:600;font-size:16px}
+.week-pending .muted{margin:2px 0 0}
+.week-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.week-head h2{margin:0}
+.week-nome{margin:2px 0 0;font-weight:700;color:var(--muted);font-size:14px}
+.week-empty{margin:14px 0 0;padding:16px;border-radius:var(--r-campo);background-color:var(--campo);border:1px dashed var(--border-forte);color:var(--muted);font-weight:600}
+.week-nav{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:16px 0 0;padding:6px;border-radius:999px;background-color:var(--crema-scura)}
+.week-nav span{font-size:14px;font-weight:800;font-variant-numeric:tabular-nums}
+.week-nav button{
+  width:36px;height:36px;border-radius:50%;border:0;background-color:var(--card);color:var(--primary);
+  font-family:inherit;font-size:20px;font-weight:800;line-height:1;cursor:pointer;
+  box-shadow:0 1px 3px rgba(42,35,32,.1);
+}
+.week-nav button[disabled]{opacity:.35;cursor:default}
+.week-nav button:focus-visible{outline:none;box-shadow:0 0 0 4px var(--ring)}
+.days{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:10px}
+.day{border:1px solid var(--border);border-radius:var(--r-campo);background-color:var(--campo);padding:12px 14px}
+.day--oggi{border-color:#CFE0D5;background-color:var(--ok-tenue)}
+.day--futuro{opacity:.5}
+.day-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.day-nome{font-weight:800;font-size:14.5px}
+.day-nome small{font-weight:600;font-size:12.5px;color:var(--muted);margin-left:6px;font-variant-numeric:tabular-nums}
+.day-dur{font-weight:800;color:var(--primary);font-size:14px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.day-dur--live{color:var(--ok)}
+.day-orari{margin:2px 0 8px;font-size:13px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
+.day .tl-bar{height:10px}
+.day .tl-seg{box-shadow:none}
+.day .tl-gap{top:calc(50% - 1px);height:2px}
+.day .tl-pausa{top:-3px;bottom:-3px;min-width:18px}
+.day .tl-pausa svg{width:10px;height:10px}
+.day-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.day-tag{display:inline-flex;align-items:center;font-size:12px;font-weight:800;border:1px solid currentColor;border-radius:999px;padding:2px 10px}
+.day-tag--assenza{color:var(--warn);background-color:var(--warn-tenue)}
+.day-tag--warn{color:var(--err);background-color:var(--err-tenue)}
+/* Straordinario dal registro (app Portieri) */
+.day-extra{
+  display:flex;align-items:center;gap:9px;margin-top:10px;padding:6px 12px 6px 6px;border-radius:12px;
+  background-image:linear-gradient(90deg,var(--primary-tenue),rgba(248,239,242,0));
+  font-size:13px;font-weight:700;color:var(--text);
+}
+.day-extra i{width:24px;height:24px;flex:none;border-radius:8px;display:grid;place-items:center;background-color:var(--primary);color:#fff;box-shadow:0 3px 8px -4px rgba(139,21,56,.7)}
+.day-extra svg{width:14px;height:14px;display:block}
+.day-extra b{margin-left:auto;font-weight:800;color:var(--primary);font-variant-numeric:tabular-nums}
+.week-note{margin:14px 0 0}
+
+/* --- Timbrature in attesa (in cima al riepilogo settimanale) --- */
 .history-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:10px}
 .history-item{
   display:flex;align-items:center;justify-content:space-between;gap:12px;
