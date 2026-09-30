@@ -2,6 +2,16 @@
    Web app di timbratura con badge QR, installata da ogni dipendente sul
    proprio telefono. Allineata a Portieri 2.0.
 
+   2.7.0 — 30/09/2026 — "Le tue presenze"
+   - Anche l'entrata non timbrata è segnalata (etichetta rossa, con
+     l'orario dell'uscita), come già l'uscita non timbrata; le ore del
+     giorno contano solo i tratti completi.
+   - Si parte dal primo giorno del 2026 presente nel registro per quel
+     badge (lo script v6 lo restituisce come "primo"): la freccia indietro
+     si ferma a quel mese e i giorni precedenti non compaiono.
+   - Ogni barra è sulla scala del suo giorno (dalla prima entrata
+     all'ultima uscita, o a ora): sempre piena agli estremi.
+
    NOVITÀ 2.6.0 — 30/09/2026
    - Letto il badge la timbratura si registra subito con il tipo proposto
      dal registro (Entrata se si risulta fuori, Uscita se in studio): niente
@@ -111,7 +121,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.6.0";
+const APP_VERSION = "2.7.0";
 const LAST_UPDATE = "2026-09-30";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -799,9 +809,15 @@ function confirmRead(){
    si conta (chi esce alle 13 e rientra alle 14 non perde nulla). */
 function turniDa(events){
   const turni = [];
+  const orfane = [];   // uscite senza un'entrata prima (entrata non timbrata)
   let aperto = null, pausa = 0;
   events.forEach(e => {
     if(e.tipo === "entrata"){ if(!aperto) aperto = e.ora; }
+    else if(e.tipo === "uscita" && !aperto){
+      // Stessa uscita ripetuta subito dopo (doppio invio): non è un'anomalia
+      const prec = turni[turni.length - 1];
+      if(!(prec && prec.a === e.ora) && !orfane.includes(e.ora)) orfane.push(e.ora);
+    }
     else if(e.tipo === "uscita" && aperto){
       const da = hmToMin(aperto), a = hmToMin(e.ora);
       const lordo = Math.max(0, a - da);
@@ -811,7 +827,7 @@ function turniDa(events){
       aperto = null;
     }
   });
-  return { turni, aperto, pausa, totale: turni.reduce((s, t) => s + t.min, 0) };
+  return { turni, aperto, orfane, pausa, totale: turni.reduce((s, t) => s + t.min, 0) };
 }
 function giornataDi(empId){ return turniDa(todayEventsOf(empId)); }
 function fmtDurata(min){
@@ -1017,7 +1033,18 @@ function meseSposta(ym, n){
   const d = new Date(y, m - 1 + n, 1, 12);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
 }
-function meseMinimo(){ return meseSposta(meseCorrente(), -MESI_INDIETRO); }
+/* Primo mese consultabile: quello del primo giorno del 2026 nel registro
+   per questo badge (v2.7.0); finché non è noto, gennaio 2026 */
+const ANNO_INIZIO = "2026-01";
+function primoGiornoRegistro(){
+  return state.presenze && state.presenze.id === myBadge() && state.presenze.primo ? state.presenze.primo : "";
+}
+function meseMinimo(){
+  const p = primoGiornoRegistro();
+  const min = p ? p.slice(0, 7) : ANNO_INIZIO;
+  const limite = meseSposta(meseCorrente(), -MESI_INDIETRO);
+  return min > limite ? min : limite;
+}
 function lunedi(d){
   const x = new Date(d); x.setHours(12, 0, 0, 0);
   x.setDate(x.getDate() - (x.getDay() + 6) % 7);
@@ -1028,7 +1055,7 @@ function isoToDate(iso){ const [y, m, d] = iso.split("-").map(Number); return ne
 /* Dati per badge: { id, mesi: { "YYYY-MM": { giorni: {ISO: {...}}, at } } } */
 function loadMesiCache(){
   const c = readStore(MESI_KEY, null);
-  if(c && c.id && c.mesi && typeof c.mesi === "object") state.presenze = c;
+  if(c && c.id && c.mesi && typeof c.mesi === "object") state.presenze = { primo: "", ...c };
 }
 function saveMesiCache(){
   if(!state.presenze) return;
@@ -1038,11 +1065,11 @@ function saveMesiCache(){
     const { giorni, at } = state.presenze.mesi[k];
     if(at) mesi[k] = { giorni, at };
   });
-  writeStore(MESI_KEY, { id: state.presenze.id, mesi });
+  writeStore(MESI_KEY, { id: state.presenze.id, primo: state.presenze.primo || "", mesi });
 }
 function datiMese(ym){
   const id = myBadge();
-  if(!state.presenze || state.presenze.id !== id) state.presenze = { id, mesi: {} };
+  if(!state.presenze || state.presenze.id !== id) state.presenze = { id, primo: "", mesi: {} };
   if(!state.presenze.mesi[ym]) state.presenze.mesi[ym] = { giorni: {}, at: 0 };
   return state.presenze.mesi[ym];
 }
@@ -1090,6 +1117,11 @@ async function fetchWeek(ym){
     });
     dati.giorni = giorni;
     dati.at = Date.now();
+    // Primo giorno del 2026 nel registro (script v6); "" se non ce ne sono
+    if(typeof data.primo === "string"){
+      const [pd, pm, py] = data.primo.split("/");
+      state.presenze.primo = (pd && pm && py) ? `${py}-${pad(+pm)}-${pad(+pd)}` : "";
+    }
     dati.errore = false; dati.motivo = "";
     saveMesiCache();
   } catch(e) {
@@ -1235,6 +1267,8 @@ function renderWeek(){
       const iso = toISODate(d);
       // In "Tutto il mese" solo i giorni del mese; la settimana singola è intera
       if(state.settSel === "tutto" && iso.slice(0, 7) !== mese) continue;
+      const primo = primoGiornoRegistro();
+      if(primo && iso < primo) continue;
       const info = giornoInfo(iso, id);
       // Sabato e domenica solo con timbrature o straordinari (le ferie "DAL-AL" coprono anche il weekend)
       if(i >= 5 && !info.events.length && !info.straordinario && !info.straordinarioGiornata) continue;
@@ -1245,13 +1279,7 @@ function renderWeek(){
     if(giorni.length) gruppi.push({ l, giorni });
   });
 
-  // Scala comune ai giorni mostrati: dalla prima entrata all'ultima uscita
-  let lo = Infinity, hi = -Infinity;
-  gruppi.forEach(gr => gr.giorni.forEach(x => {
-    x.g.turni.forEach(t => { lo = Math.min(lo, hmToMin(t.da)); hi = Math.max(hi, hmToMin(t.a)); });
-    if(x.live){ lo = Math.min(lo, hmToMin(x.live.da)); hi = Math.max(hi, hmToMin(x.live.a)); }
-  }));
-  const scala = isFinite(lo) && hi > lo ? [lo, hi] : null;
+  // v2.7.0: ogni barra sulla scala del suo giorno, sempre piena agli estremi
 
   const el = (tag, cls, txt) => { const e = document.createElement(tag); if(cls) e.className = cls; if(txt != null) e.textContent = txt; return e; };
   const giornoEl = x => {
@@ -1265,19 +1293,23 @@ function renderWeek(){
 
     if(x.g.turni.length) dur.textContent = fmtDurata(x.g.totale);
     else if(x.live){ dur.textContent = "in corso"; dur.classList.add("day-dur--live"); }
-    else if(!x.info.assenze.length) dur.textContent = "—";
+    else if(!x.info.assenze.length && !x.g.aperto && !x.g.orfane.length) dur.textContent = "—";
 
-    const orari = x.g.turni.map(t => `${t.da} – ${t.a}`);
-    if(x.live) orari.push(`in studio dalle ${x.live.da}`);
-    else if(x.g.aperto) orari.push(`entrata ${x.g.aperto}`);
-    if(orari.length) li.appendChild(el("div", "day-orari", orari.join(" · ")));
+    // Orari in ordine: tratti completi, uscite senza entrata, entrata aperta
+    const voci = x.g.turni.map(t => ({ ora: t.da, testo: `${t.da} – ${t.a}` }))
+      .concat(x.g.orfane.map(u => ({ ora: u, testo: `uscita ${u}` })));
+    if(x.live) voci.push({ ora: x.live.da, testo: `in studio dalle ${x.live.da}` });
+    else if(x.g.aperto) voci.push({ ora: x.g.aperto, testo: `entrata ${x.g.aperto}` });
+    voci.sort((a, b) => a.ora.localeCompare(b.ora));
+    if(voci.length) li.appendChild(el("div", "day-orari", voci.map(v => v.testo).join(" · ")));
 
-    if(scala && (x.g.turni.length || x.live)){
-      li.appendChild(barraGiornata(x.g.turni, { scala, live: x.live }));
+    if(x.g.turni.length || x.live){
+      li.appendChild(barraGiornata(x.g.turni, { live: x.live }));
     }
 
     const tag = [];
     x.info.assenze.forEach(a => tag.push(el("span", "day-tag day-tag--assenza", assenzaTesto(a))));
+    if(x.g.orfane.length) tag.push(el("span", "day-tag day-tag--warn", "Entrata non timbrata"));
     if(!x.live && x.g.aperto && !x.futuro) tag.push(el("span", "day-tag day-tag--warn", "Uscita non timbrata"));
     if(tag.length){ const w = el("div", "day-tags"); w.append(...tag); li.appendChild(w); }
 
