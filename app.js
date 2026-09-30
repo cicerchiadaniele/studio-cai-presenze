@@ -2,6 +2,9 @@
    Web app di timbratura con badge QR, installata da ogni dipendente sul
    proprio telefono. Allineata a Portieri 2.0.
 
+   2.5.1 — 30/09/2026: sabato e domenica non compaiono più solo perché
+   coperti da un periodo di ferie.
+
    NOVITÀ 2.5.0 — 30/09/2026 — "Le tue presenze"
    Il riepilogo settimanale diventa mensile: frecce per il mese (fino a
    12 mesi indietro) e fila di pulsanti per la settimana, più "Tutto il
@@ -98,7 +101,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.5.0";
+const APP_VERSION = "2.5.1";
 const LAST_UPDATE = "2026-09-30";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -1222,7 +1225,8 @@ function renderWeek(){
       // In "Tutto il mese" solo i giorni del mese; la settimana singola è intera
       if(state.settSel === "tutto" && iso.slice(0, 7) !== mese) continue;
       const info = giornoInfo(iso, id);
-      if(i >= 5 && !info.events.length && !info.assenze.length && !info.straordinario && !info.straordinarioGiornata) continue;
+      // Sabato e domenica solo con timbrature o straordinari (le ferie "DAL-AL" coprono anche il weekend)
+      if(i >= 5 && !info.events.length && !info.straordinario && !info.straordinarioGiornata) continue;
       const g = turniDa(info.events);
       const live = (iso === oggi && g.aperto) ? { da: g.aperto, a: adesso > g.aperto ? adesso : g.aperto } : null;
       giorni.push({ d, iso, info, g, live, futuro: iso > oggi, oggi: iso === oggi });
