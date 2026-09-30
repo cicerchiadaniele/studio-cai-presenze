@@ -2,6 +2,13 @@
    Web app di timbratura con badge QR, installata da ogni dipendente sul
    proprio telefono. Allineata a Portieri 2.0.
 
+   2.4.1 — 30/09/2026: la prima lettura del registro della giornata può
+   richiedere 10-15 secondi (avvio dello script Google): l'attesa passa da
+   12 a 40 secondi con un secondo tentativo, intanto si vedono gli ultimi
+   dati salvati sul telefono; stato dell'aggiornamento spostato in fondo,
+   con "Riprova" se non riesce. Il riepilogo si legge anche in background
+   all'apertura dell'app, così quando lo si apre è già pronto.
+
    NOVITÀ 2.4.0 — 30/09/2026
    (le cartelle 2.2.0 e 2.3.0 in Dropbox sono le prove "In assemblea",
    abbandonate: questa versione parte dalla 2.1.12)
@@ -79,7 +86,7 @@
    sent_at è l'istante della timbratura, non dell'invio: una timbratura
    rimasta in coda arriva comunque con la sua data. */
 
-const APP_VERSION = "2.4.0";
+const APP_VERSION = "2.4.1";
 const LAST_UPDATE = "2026-09-30";
 const CONFIG_DEFAULT = {
   webhook_url: "https://hook.eu1.make.com/wgbye8bprwfsxze34wuydvxckplijn1z",
@@ -104,6 +111,7 @@ const POST_TIMEOUT_MS = 10000;
 const REMOTE_KEY = "cai_studio_stato_v1";
 const HIST_KEY = "cai_studio_storico_v1";   // timbrature di questo telefono, ultimi giorni (per il riepilogo settimanale)
 const HIST_DAYS = 16;
+const WEEK_TIMEOUT_MS = 40000;              // la prima lettura del giorno può richiedere 10-15 s
 const BADGE_KEY = "cai_studio_badge_v1";    // badge di chi usa questo telefono (ultimo letto)
 const WEEK_KEY = "cai_studio_settimana_v1"; // ultima risposta del registro per il riepilogo settimanale
 const PAUSA = { da: 13 * 60, a: 14 * 60 };  // pausa pranzo, tolta in automatico dal tempo in studio
@@ -982,12 +990,19 @@ async function fetchWeek(){
   if(!id || !url || state.weekLoading || !navigator.onLine) return;
   state.weekLoading = true;
   renderWeekStato();
-  const ctrl = ("AbortController" in window) ? new AbortController() : null;
-  const t = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
+  const leggi = async () => {
+    const ctrl = ("AbortController" in window) ? new AbortController() : null;
+    const t = ctrl ? setTimeout(() => ctrl.abort(), WEEK_TIMEOUT_MS) : null;
+    try {
+      const res = await fetch(`${url}${url.includes("?") ? "&" : "?"}id=${encodeURIComponent(id)}`, { cache: "no-store", signal: ctrl?.signal });
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } finally { if(t) clearTimeout(t); }
+  };
   try {
-    const res = await fetch(`${url}${url.includes("?") ? "&" : "?"}id=${encodeURIComponent(id)}`, { cache: "no-store", signal: ctrl?.signal });
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    let data;
+    try { data = await leggi(); }
+    catch(e) { if(!navigator.onLine) throw e; data = await leggi(); }   // secondo tentativo
     // Lo script v3 (non aggiornato) ignora ?id=: niente "giorni"
     if(!data || !data.giorni || typeof data.giorni !== "object") throw new Error("script");
     const giorni = {};
@@ -1012,7 +1027,6 @@ async function fetchWeek(){
     if(state.week && state.week.id === id) state.week.errore = true;
     else state.week = { id, giorni: {}, at: 0, ok: false, errore: true };
   } finally {
-    if(t) clearTimeout(t);
     state.weekLoading = false;
     renderWeek();
   }
@@ -1054,11 +1068,20 @@ function assenzaTesto(a){
 function renderWeekStato(){
   const el = $("#week-stato");
   if(!el) return;
-  if(state.weekLoading){ el.textContent = "Aggiornamento…"; return; }
-  if(!navigator.onLine){ el.textContent = "Offline: ultimi dati disponibili"; return; }
-  if(state.week && state.week.errore){ el.textContent = "Registro non raggiungibile: dati di questo telefono"; return; }
-  if(state.week && state.week.at){ el.textContent = `Aggiornato alle ${toHM(new Date(state.week.at))}`; return; }
-  el.textContent = "";
+  el.classList.toggle("week-stato--warn", false);
+  const hm = state.week && state.week.at ? toHM(new Date(state.week.at)) : "";
+  if(state.weekLoading){ el.textContent = "Aggiornamento dal registro…"; return; }
+  if(!navigator.onLine){ el.textContent = hm ? `Offline · dati delle ${hm}` : "Offline"; return; }
+  if(state.week && state.week.errore){
+    el.classList.add("week-stato--warn");
+    el.textContent = hm ? `Aggiornamento non riuscito · dati delle ${hm} ` : "Registro non raggiungibile ";
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "link-inline"; b.textContent = "Riprova";
+    b.addEventListener("click", fetchWeek);
+    el.appendChild(b);
+    return;
+  }
+  el.textContent = hm ? `Aggiornato alle ${hm}` : "";
 }
 
 function renderWeek(){
@@ -1412,6 +1435,9 @@ function mostraApp(){ document.documentElement.classList.add("app-pronta"); }
     mostraApp();
   }
   fetchStatus();
+  // Riepilogo settimanale letto in anticipo, in background: quando lo si
+  // apre i dati ci sono già (la prima lettura del registro è lenta)
+  setTimeout(() => { if(myBadge()) fetchWeek(); }, 3000);
   await setupDetector();
   startCamera();
   requestWakeLock();
